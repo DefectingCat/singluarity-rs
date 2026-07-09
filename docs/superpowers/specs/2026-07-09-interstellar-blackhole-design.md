@@ -122,11 +122,11 @@ Termination conditions for a ray (checked each step):
 
 - The scene is 100% procedural (no 3D meshes to composite over). The black hole is drawn by a **single full-screen quad** with a custom `Material2d`, whose fragment shader performs all ray-tracing. No scene-color texture is read, so a full-screen `Material2d` is simpler than a render-graph post-processing node.
 - The "camera" is just a set of material uniforms (eye position, forward/right/up vectors, FOV, aspect) updated each frame from the orbit controller.
-- `Material2d` puts our bind group at **group 1** (group 0 is Bevy's view uniforms). WGSL bindings:
-  - `@group(1) @binding(0) var<uniform> params: BlackHoleParams;`
-  - `@group(1) @binding(1) var<uniform> camera: CameraParams;`
-  - `@group(1) @binding(2) var skybox: texture_cube<f32>;` + `@group(1) @binding(3) var skybox_sampler;`
-  - `@group(1) @binding(4) var<storage, read> planets: array<SphereData>;` (+ count in params)
+- `Material2d` puts the material bind group at **group 2** (group 0 = Bevy view uniforms, group 1 = mesh bindings, group 2 = material). WGSL uses the `#{MATERIAL_BIND_GROUP}` token (resolved by `Material2dPlugin`) so bindings are:
+  - `@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;` (single uniform struct: params + camera packed)
+  - `@group(#{MATERIAL_BIND_GROUP}) @binding(1) var skybox: texture_cube<f32>;` + `@binding(2) var skybox_sampler: sampler;`
+  - `@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<storage, read> planets: array<SphereData>;` (+ count in uniforms)
+- Imports: `Material2d`, `Material2dPlugin`, `AlphaMode2d` from `bevy::sprite_render`. Spawn via components (no bundles): `commands.spawn(Camera2d)` and `(Mesh2d(..), MeshMaterial2d(..))`.
 - Render-scale support: the quad is drawn at `render_scale` (0.5–1.0) of the window and upscaled, needed for the Phase 2 Kerr integrator. Phase 1 targets 1.0 at 60fps.
 - **UI compositing:** `bevy_egui` (v0.41.0, depends on Bevy `^0.19` + egui `^0.35`) renders the control panel on top of the black-hole quad via its own render pass. Mouse input is routed to the egui panel when the cursor is over it, otherwise to the orbit controller (see §7).
 
@@ -258,9 +258,10 @@ The app runs on **desktop** (native wgpu: Vulkan/Metal/D3D12) and **web** via **
 
 ### 13.2 Build & toolchain
 - **Desktop:** `cargo run --release` (standard wgpu backend auto-selected by OS).
-- **Web:** target `wasm32-unknown-unknown`. Build with `trunk` (recommended) or `wasm-bindgen-cli`. A `Trunk.toml` + `index.html` are part of the deliverable. `trunk serve` for dev, `trunk build --release` for the deployable artifact.
-- Bevy web setup: `DefaultPlugins.set(RenderPlugin { wgpu_backends: WebGPU })` on web builds; native uses default backends. Gated by `#[cfg(target_arch = "wasm32")]`.
+- **Web:** target `wasm32-unknown-unknown`. Build with `trunk` (recommended) or `wasm-bindgen-cli`. A `Trunk.toml` + `index.html` are part of the deliverable. `trunk serve` for dev, `trunk build --release` for the deployable artifact. Pass the `webgpu` feature: `trunk serve --features webgpu` (or bake it into `index.html` via `data-cargo-features="webgpu"`).
+- Bevy web backend: enable Bevy's `webgpu` cargo feature. `WgpuSettings::default()` then auto-selects `Backends::BROWSER_WEBGPU` on `wasm32` and `Backends::all()` on desktop — **no manual `RenderPlugin` backend config needed** (`RenderPlugin` has no `wgpu_backends` field in 0.19). `getrandom` 0.4 / `wasm_js` is handled by Bevy transitively; no user Cargo entries required.
 - Asset loading on web: shaders live under `assets/shaders/` and are loaded via Bevy's asset system, which works on web (paths, not absolute). No filesystem access assumed.
+- Canvas sizing on web: set `Window.fit_canvas_to_parent = true` so the canvas tracks the browser window and resizes propagate as Bevy `WindowResized` events.
 - `bevy_egui` works on both native and web (it handles its own input/winit wiring); no UI changes needed between platforms.
 
 ### 13.3 Cross-platform code hygiene
