@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Status:** Draft (awaiting user review)
-**Project:** `singularity-rs` (Rust, edition 2024, Bevy 0.19)
+**Project:** `singularity-rs` (Rust, edition 2024, Bevy 0.19) — **desktop + web (WebGPU)**
 
 ## 0. Dependencies
 
@@ -11,9 +11,13 @@
 bevy = "0.19"        # engine (first release on Rust edition 2024)
 bevy_egui = "0.41"   # UI panel; depends on bevy ^0.19 + egui ^0.35
 # (rand/noise for procedural stars & disk texture — chosen in plan phase)
+
+[dependencies.web-sys]  # web only; see §13
+version = "0.3"
+features = ["Window"]   # expanded in plan phase as needed
 ```
 
-Bevy feature flags: default. No heavy features needed (no 3D scene, no audio). The full-screen `Material2d` path uses Bevy's core pipeline only.
+Bevy feature flags: default. No heavy features needed (no 3D scene, no audio). The full-screen `Material2d` path uses Bevy's core pipeline only. Storage buffers (planets) are usable on both native and WebGPU.
 
 ## 1. Goal
 
@@ -159,6 +163,7 @@ src/
   params.rs            # BlackHoleParams resource (CPU mirror of uniforms)
   camera.rs            # Orbit camera input controller
   ui.rs                # egui "Controls" panel (collapsible sections)
+  web.rs               # #[cfg(wasm32)] glue: WebGPU backend, fallback message, canvas
   scene/
     mod.rs
     disk.rs            # Disk parameters & defaults
@@ -177,6 +182,9 @@ assets/shaders/
   stars.wgsl           # Procedural starfield
   skybox.wgsl          # Cubemap sampling
   common.wgsl          # Shared structs (SphereData, params, camera), constants
+web/                   # web build inputs (Trunk)
+  index.html           # canvas + fallback message container
+Trunk.toml             # trunk build config (wasm32-unknown-unknown)
 ```
 
 ## 9. Parameters (`BlackHoleParams`)
@@ -224,14 +232,43 @@ This is primarily a visual artifact; verification strategy:
   5. Doppler asymmetry: one side brighter, bright side shifts as camera orbits.
   6. Lensing of stars visible near the hole edge.
   7. (Feature) grid bends near the hole; (feature) planet arcs near the hole.
-- Performance budget check: confirm ≥60fps at `render_scale=1.0`, Steps=300, in Phase 1.
+- Performance budget check: confirm ≥60fps at `render_scale=1.0`, Steps=300, in Phase 1 on desktop; confirm interactive (≥30fps) at `render_scale=0.75`, Steps=200 in a WebGPU browser.
+- **Web build check:** `trunk build --release` produces a wasm artifact that loads in Chrome/Edge, renders the same scene, the egui panel is usable, and a non-WebGPU browser shows the fallback message instead of a blank canvas.
 
 ## 12. Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
 | RK4 too slow at 300 steps/full-res | Make steps + render_scale live params; profile early. Phase 1 default can drop to 200 steps. |
-| WGSL storage-buffer support edge cases for planets | Bound loop with `MAX_PLANETS` constant; fall back to uniform array if needed. |
+| WGSL storage-buffer support edge cases for planets | Bound loop with `MAX_PLANETS` constant; storage buffers are valid on both native and WebGPU (our only web target). |
 | Flamm grid adds noise/visual clutter | Off by default; additive + faded; separate toggle. |
 | Kerr math instability (Phase 2) | Isolated to Phase 2; adaptive step; does not block Phase 1. |
 | Secondary images absent (loop terminates early) | Explicit non-termination policy across photon sphere (Section 4). |
+| Web performance lower than desktop | Web target starts at `render_scale=0.75`, steps=200 (tunable in UI); lazy/integration cost is GPU-bound regardless of platform. |
+| Browser WebGPU not available | Detect `navigator.gpu` failure, show a plain HTML/CSS message via the `web` shim telling the user to use a WebGPU-capable browser (Chrome/Edge/modern Firefox & Safari). |
+
+## 13. Platform support (desktop + web/WebGPU)
+
+The app runs on **desktop** (native wgpu: Vulkan/Metal/D3D12) and **web** via **WebGPU** (WebGL2 is intentionally not targeted — see constraints below).
+
+### 13.1 Why WebGPU only (not WebGL2)
+- Bevy/wgpu forces a compile-time choice between WebGPU and WebGL2; they cannot coexist in one binary (bevy issue #13168).
+- **WebGL2 has no storage buffers** (`max_storage_buffers_per_stage = 0`), which our planets feature depends on. WebGPU supports them, as does native.
+- WebGPU is now in Chrome, Edge, and recent Firefox/Safari. For unsupported browsers we show a fallback message rather than silently failing.
+
+### 13.2 Build & toolchain
+- **Desktop:** `cargo run --release` (standard wgpu backend auto-selected by OS).
+- **Web:** target `wasm32-unknown-unknown`. Build with `trunk` (recommended) or `wasm-bindgen-cli`. A `Trunk.toml` + `index.html` are part of the deliverable. `trunk serve` for dev, `trunk build --release` for the deployable artifact.
+- Bevy web setup: `DefaultPlugins.set(RenderPlugin { wgpu_backends: WebGPU })` on web builds; native uses default backends. Gated by `#[cfg(target_arch = "wasm32")]`.
+- Asset loading on web: shaders live under `assets/shaders/` and are loaded via Bevy's asset system, which works on web (paths, not absolute). No filesystem access assumed.
+- `bevy_egui` works on both native and web (it handles its own input/winit wiring); no UI changes needed between platforms.
+
+### 13.3 Cross-platform code hygiene
+- All WGSL is backend-agnostic; no `#ifdef`-style shader branching is needed (we don't use WebGL2).
+- Rust code uses `#[cfg(target_arch = "wasm32")]` only for: (a) forcing the WebGPU backend, (b) a WebGPU-availability check + fallback message, (c) canvas/resizing glue. All simulation/render logic is identical across platforms.
+- Avoid `std::time`/blocking I/O patterns that misbehave on wasm; use Bevy's `Time` resource and async asset loading.
+
+### 13.4 Web-specific parameters/UX
+- Default `render_scale` lowered to 0.75 and `steps` to 200 on web (auto-detected via `cfg`) to keep frame times reasonable; both still live-tunable in the egui panel.
+- Canvas resizes to the browser window; `render_scale` is relative to that.
+- Pointer (mouse + touch) input routed the same way as desktop: egui panel gets priority when hovered, else the orbit controller consumes it.
