@@ -4,6 +4,17 @@
 **Status:** Draft (awaiting user review)
 **Project:** `singularity-rs` (Rust, edition 2024, Bevy 0.19)
 
+## 0. Dependencies
+
+```toml
+[dependencies]
+bevy = "0.19"        # engine (first release on Rust edition 2024)
+bevy_egui = "0.41"   # UI panel; depends on bevy ^0.19 + egui ^0.35
+# (rand/noise for procedural stars & disk texture — chosen in plan phase)
+```
+
+Bevy feature flags: default. No heavy features needed (no 3D scene, no audio). The full-screen `Material2d` path uses Bevy's core pipeline only.
+
 ## 1. Goal
 
 A real-time, physically-motivated renderer of a Gargantua-style black hole in Bevy, matching the visual reference video (`5u1ymibkiixg1.mp4`): a black shadow, a tilted glowing accretion disk with the lensed halo wrapping over and under the hole, a Doppler brightness asymmetry, and a lensed background starfield — all produced by geodesic ray-tracing curved spacetime per pixel.
@@ -113,16 +124,32 @@ Termination conditions for a ray (checked each step):
   - `@group(1) @binding(2) var skybox: texture_cube<f32>;` + `@group(1) @binding(3) var skybox_sampler;`
   - `@group(1) @binding(4) var<storage, read> planets: array<SphereData>;` (+ count in params)
 - Render-scale support: the quad is drawn at `render_scale` (0.5–1.0) of the window and upscaled, needed for the Phase 2 Kerr integrator. Phase 1 targets 1.0 at 60fps.
+- **UI compositing:** `bevy_egui` (v0.41.0, depends on Bevy `^0.19` + egui `^0.35`) renders the control panel on top of the black-hole quad via its own render pass. Mouse input is routed to the egui panel when the cursor is over it, otherwise to the orbit controller (see §7).
 
 ## 7. Camera & interaction
 
 Orbit controller around the origin:
-- **Drag** (mouse) → yaw/pitch the camera around the hole.
-- **Wheel** → change camera distance (= impact parameter / how close to the hole).
-- **Keyboard** → live-tune: disk inner/outer radius, disk tilt, disk brightness, Doppler intensity, integrator step count, render scale, grid toggle, procedural-star intensity.
-- Parameters live in a `BlackHoleParams` `Resource`; a system mirrors them into the material's uniform each frame.
+- **Drag** (mouse) → yaw/pitch the camera around the hole (ignored while the cursor is over the egui panel).
+- **Wheel** → change camera distance (= impact parameter / how close to the hole); consumed by egui when over the panel.
+- Parameters are **live-tuned via an egui panel** (no keyboard hotkeys required). The panel reads/writes the `BlackHoleParams` `Resource`, and a system mirrors that resource into the material's uniform each frame.
 
 Default scene (matches the reference): camera at moderate distance, disk tilted ~70–80° from face-on (so the lensed halo is prominent), Doppler enabled, grid off, procedural stars on.
+
+## 7.5. Parameter UI (egui)
+
+A single **collapsible** egui window docked to a screen corner (top-left), titled "Controls", with grouped `egui::CollapsingHeader` sections so the user can fold sections away or hide the whole window to admire the view:
+
+- **Camera** — orbit distance (slider), yaw/pitch (sliders; also driven by drag), FOV, reset button.
+- **Accretion Disk** — inner radius, outer radius, tilt, brightness, rotation speed.
+- **Doppler** — enable checkbox, intensity slider.
+- **Renderer** — integrator step count (slider 100–600), render scale (0.5–1.0), show FPS.
+- **Background** — procedural star intensity, skybox load/clear, skybox intensity.
+- **Grid** — enable checkbox (off by default), line density, depth fade, color.
+- **Planets** — add/remove a test planet, edit the active planet's radius/color/position.
+
+Every control mutates `BlackHoleParams` (or the relevant component) in place; the mirror system propagates it to the GPU uniform, so changes appear within one frame. Sliders show live numeric values. `bevy_egui` `EguiPlugin` is added to the app; a `ui_system` in `Update` builds the window each frame from the `Resource`.
+
+## 8. File structure
 
 ## 8. File structure
 
@@ -131,6 +158,7 @@ src/
   main.rs              # App setup, plugin registration, default scene
   params.rs            # BlackHoleParams resource (CPU mirror of uniforms)
   camera.rs            # Orbit camera input controller
+  ui.rs                # egui "Controls" panel (collapsible sections)
   scene/
     mod.rs
     disk.rs            # Disk parameters & defaults
