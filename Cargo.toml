@@ -4,3 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy = "0.19"
+bevy_egui = "0.41"
+
+# Web-only deps for WebGPU detection + fallback message.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Gpu", "Navigator", "Window", "Document", "HtmlElement", "Element"] }
+wasm-bindgen = "0.2"
+
+# Smaller wasm binary in release web builds (per Bevy examples README).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
