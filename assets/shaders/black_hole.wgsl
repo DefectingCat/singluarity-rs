@@ -3,6 +3,7 @@
 #import "shaders/geodesic_schwarzschild.wgsl"
 #import "shaders/stars.wgsl"
 #import "shaders/disk.wgsl"
+#import "shaders/planets.wgsl"
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -39,15 +40,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     uv.x *= aspect;
     let dir = ray_direction(uv);
 
-    // Work in disk-local space: rotate eye + dir by -disk_tilt around X so the
-    // disk lies on y=0. (disk_hit/disk_color assume disk-local coords.)
     var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
     var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
 
     let dt = max(length(uniforms.eye.xyz), 20.0) / f32(uniforms.steps);
     let steps = uniforms.steps;
 
-    // Front-to-back compositing.
     var accum_color = vec3<f32>(0.0);
     var accum_alpha = 0.0;
 
@@ -55,12 +53,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var i: u32 = 0u; i < steps; i = i + 1u) {
         let r = length(pos);
         if (r < uniforms.rs) {
-            // Captured: whatever we've composited so far is the result.
             break;
         }
         if (r > 1000.0) {
-            // Escaped: add background stars along the (disk-local) final dir.
-            // Rotate back to world for the star sample.
             let world_dir = normalize(rot_x(d, uniforms.disk_tilt));
             let star = star_color(world_dir, uniforms.star_intensity);
             accum_color += (1.0 - accum_alpha) * star;
@@ -68,22 +63,27 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
 
-        // RK4 step (single step), then test disk crossing on the segment.
-        let (k1p, k1d) = deriv(pos, d);
-        let (k2p, k2d) = deriv(pos + k1p * dt * 0.5, normalize(d + k1d * dt * 0.5));
-        let (k3p, k3d) = deriv(pos + k2p * dt * 0.5, normalize(d + k2d * dt * 0.5));
-        let (k4p, k4d) = deriv(pos + k3p * dt, normalize(d + k3d * dt));
-        let new_pos = pos + (k1p + 2.0*k2p + 2.0*k3p + k4p) * dt / 6.0;
-        let new_dir = normalize(d + (k1d + 2.0*k2d + 2.0*k3d + k4d) * dt / 6.0);
+        let k1 = deriv(pos, d);
+        let k2 = deriv(pos + k1.dpos * dt * 0.5, normalize(d + k1.ddir * dt * 0.5));
+        let k3 = deriv(pos + k2.dpos * dt * 0.5, normalize(d + k2.ddir * dt * 0.5));
+        let k4 = deriv(pos + k3.dpos * dt, normalize(d + k3.ddir * dt));
+        let new_pos = pos + (k1.dpos + 2.0*k2.dpos + 2.0*k3.dpos + k4.dpos) * dt / 6.0;
+        let new_dir = normalize(d + (k1.ddir + 2.0*k2.ddir + 2.0*k3.ddir + k4.ddir) * dt / 6.0);
 
         if (disk_hit(prev, new_pos)) {
-            // Approximate the crossing point by interpolating to y=0.
             let ty = prev.y / (prev.y - new_pos.y);
             let hit = mix(prev, new_pos, vec3<f32>(ty));
             let dc = disk_color(hit, new_dir);
-            let a = 0.85; // disk is nearly opaque
+            let a = 0.85;
             accum_color += (1.0 - accum_alpha) * dc * a;
             accum_alpha += (1.0 - accum_alpha) * a;
+            if (accum_alpha > 0.99) { break; }
+        }
+
+        let ph = planet_hit(prev, new_pos, new_dir);
+        if (ph.w > 0.0) {
+            accum_color += (1.0 - accum_alpha) * ph.xyz * ph.w;
+            accum_alpha += (1.0 - accum_alpha) * ph.w;
             if (accum_alpha > 0.99) { break; }
         }
 
