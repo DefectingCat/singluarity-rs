@@ -3,6 +3,7 @@ use bevy::window::WindowPlugin;
 
 #[cfg(target_arch = "wasm32")]
 mod web;
+mod render;
 
 fn main() {
     // On web, abort startup if WebGPU isn't available and show a message.
@@ -24,10 +25,6 @@ fn main() {
             }),
             ..default()
         }))
-        .add_systems(Startup, setup)
+        .add_plugins(render::BlackHolePlugin)
         .run();
-}
-
-fn setup(mut commands: Commands) {
-    commands.spawn(Camera2d);
 }
