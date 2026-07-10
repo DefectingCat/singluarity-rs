@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>singularity-rs</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+      canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+  </head>
+  <body>
+    <link
+      data-trunk rel="rust"
+      href="../Cargo.toml"
+      data-bin="singularity-rs"
+      data-type="main"
+      data-cargo-features="bevy/webgpu"
+      data-wasm-opt="z"
+    />
+  </body>
+</html>

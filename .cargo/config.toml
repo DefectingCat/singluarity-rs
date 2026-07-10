@@ -1,0 +1,5 @@
+# WebGPU bindings in web-sys are gated behind `web_sys_unstable_apis`.
+# Enable that cfg when building for the web target only (harmless on desktop,
+# where src/web.rs is cfg'd out anyway).
+[target.'cfg(target_arch = "wasm32")']
+rustflags = ["--cfg", "web_sys_unstable_apis"]
