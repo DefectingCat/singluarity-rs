@@ -1,6 +1,7 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 #import "shaders/ray_gen.wgsl"
 #import "shaders/geodesic_schwarzschild.wgsl"
+#import "shaders/stars.wgsl"
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -36,13 +37,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var uv = (in.uv * 2.0 - 1.0);
     uv.x *= aspect;
     let dir = ray_direction(uv);
-    // Step size scales with how far we need to travel (~ distance/ steps).
     let dt = max(length(uniforms.eye.xyz), 20.0) / f32(uniforms.steps);
     let res = classify_ray(uniforms.eye.xyz, dir, uniforms.steps, dt);
     if (res.status == 1u) {
         // Captured = shadow.
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    // Escaped: dim grey for now (stars come in Task 11).
-    return vec4<f32>(0.02, 0.02, 0.02, 1.0);
+    // Escaped: sample procedural stars along the bent final direction.
+    let star = star_color(normalize(res.final_dir), uniforms.star_intensity);
+    return vec4<f32>(star, 1.0);
 }
