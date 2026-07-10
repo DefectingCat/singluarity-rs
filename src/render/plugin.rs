@@ -11,6 +11,7 @@ impl Plugin for BlackHolePlugin {
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Update, update_time)
             .init_resource::<crate::camera::OrbitCamera>()
+            .init_resource::<crate::params::BlackHoleParams>()
             .add_systems(Update, crate::camera::orbit_controller);
     }
 }
