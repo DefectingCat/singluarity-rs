@@ -10,8 +10,15 @@ impl Plugin for BlackHolePlugin {
         app.init_resource::<crate::camera::OrbitCamera>()
             .init_resource::<crate::params::BlackHoleParams>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
+            .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(Startup, spawn_fullscreen_quad)
-            .add_systems(Update, (crate::camera::orbit_controller, mirror_params));
+            .add_systems(
+                Update,
+                (crate::camera::orbit_controller, mirror_params),
+            )
+            // bevy_egui 0.41 requires UI systems to run inside the egui context
+            // pass (fonts/ctx are initialized there); placing them in Update panics.
+            .add_systems(bevy_egui::EguiPrimaryContextPass, crate::ui::ui_system);
     }
 }
 
