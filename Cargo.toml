@@ -3,6 +3,10 @@ name = "singularity-rs"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "singularity_rs"
+path = "src/lib.rs"
+
 [dependencies]
 bevy = "0.19"
 bevy_egui = "0.41"
