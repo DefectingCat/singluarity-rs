@@ -1,5 +1,6 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 #import "shaders/ray_gen.wgsl"
+#import "shaders/geodesic_schwarzschild.wgsl"
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -31,11 +32,17 @@ struct BlackHoleUniforms {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // in.uv is [0,1] across the quad. Center and flip y, apply aspect.
     let aspect = uniforms.resolution.x / uniforms.resolution.y;
     var uv = (in.uv * 2.0 - 1.0);
     uv.x *= aspect;
     let dir = ray_direction(uv);
-    // Visualize ray direction as a color (sanity check).
-    return vec4<f32>(abs(dir), 1.0);
+    // Step size scales with how far we need to travel (~ distance/ steps).
+    let dt = max(length(uniforms.eye.xyz), 20.0) / f32(uniforms.steps);
+    let res = classify_ray(uniforms.eye.xyz, dir, uniforms.steps, dt);
+    if (res.status == 1u) {
+        // Captured = shadow.
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    // Escaped: dim grey for now (stars come in Task 11).
+    return vec4<f32>(0.02, 0.02, 0.02, 1.0);
 }
