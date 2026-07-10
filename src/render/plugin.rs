@@ -9,7 +9,9 @@ impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_systems(Startup, spawn_fullscreen_quad)
-            .add_systems(Update, update_time);
+            .add_systems(Update, update_time)
+            .init_resource::<crate::camera::OrbitCamera>()
+            .add_systems(Update, crate::camera::orbit_controller);
     }
 }
 
