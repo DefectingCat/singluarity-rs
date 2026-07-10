@@ -7,12 +7,11 @@ pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
-            .add_systems(Startup, spawn_fullscreen_quad)
-            .add_systems(Update, update_time)
-            .init_resource::<crate::camera::OrbitCamera>()
+        app.init_resource::<crate::camera::OrbitCamera>()
             .init_resource::<crate::params::BlackHoleParams>()
-            .add_systems(Update, crate::camera::orbit_controller);
+            .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
+            .add_systems(Startup, spawn_fullscreen_quad)
+            .add_systems(Update, (crate::camera::orbit_controller, mirror_params));
     }
 }
 
@@ -20,17 +19,56 @@ fn spawn_fullscreen_quad(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
+    window: Query<&Window>,
 ) {
-    commands.spawn(Camera2d);
+    let win = match window.single() {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let aspect = win.width() / win.height();
     commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(materials.add(BlackHoleMaterial { time: 0.0 })),
+        Mesh2d(meshes.add(Rectangle::new(2.0 * aspect, 2.0))),
+        MeshMaterial2d(materials.add(BlackHoleMaterial::default())),
         Transform::default(),
     ));
+    commands.spawn(Camera2d);
 }
 
-fn update_time(time: Res<Time>, mut materials: ResMut<Assets<BlackHoleMaterial>>) {
+fn mirror_params(
+    camera: Res<crate::camera::OrbitCamera>,
+    params: Res<crate::params::BlackHoleParams>,
+    time: Res<Time>,
+    window: Query<&Window>,
+    mut materials: ResMut<Assets<BlackHoleMaterial>>,
+) {
+    let win = match window.single() {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    // Only update when something changed.
+    let (eye, forward, right, up) = camera.basis();
     for (_, mat) in materials.iter_mut() {
-        mat.time = time.elapsed_secs();
+        let u = &mut mat.uniforms;
+        u.eye = eye;
+        u.forward = forward;
+        u.right = right;
+        u.up = up;
+        u.fov = camera.fov;
+        u.resolution = Vec2::new(win.width(), win.height());
+        u.time = time.elapsed_secs();
+        u.rs = params.rs;
+        u.disk_inner = params.disk_inner;
+        u.disk_outer = params.disk_outer;
+        u.disk_tilt = params.disk_tilt;
+        u.disk_brightness = params.disk_brightness;
+        u.disk_rotation_speed = params.disk_rotation_speed;
+        u.doppler_strength = params.doppler_strength;
+        u.star_intensity = params.star_intensity;
+        u.skybox_intensity = params.skybox_intensity;
+        u.grid_density = params.grid_density;
+        u.doppler_enabled = params.doppler_enabled as u32;
+        u.grid_enabled = params.grid_enabled as u32;
+        u.planet_count = params.planet_count;
+        u.steps = params.steps;
     }
 }

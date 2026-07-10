@@ -1,17 +1,119 @@
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
-use bevy::render::render_resource::AsBindGroup;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+/// GPU uniform: params + camera packed into one struct bound at binding 0.
+#[derive(Clone, ShaderType)]
+pub struct BlackHoleUniforms {
+    // Camera basis + eye (4 vec3s = must align; pad each to vec4 via the shader struct)
+    pub eye: Vec3,
+    pub _pad0: f32,
+    pub forward: Vec3,
+    pub _pad1: f32,
+    pub right: Vec3,
+    pub _pad2: f32,
+    pub up: Vec3,
+    pub fov: f32,
+    // Resolution
+    pub resolution: Vec2,
+    pub time: f32,
+    pub _pad3: f32,
+    // Physics + disk
+    pub rs: f32,
+    pub disk_inner: f32,
+    pub disk_outer: f32,
+    pub disk_tilt: f32,
+    pub disk_brightness: f32,
+    pub disk_rotation_speed: f32,
+    pub doppler_strength: f32,
+    pub star_intensity: f32,
+    pub skybox_intensity: f32,
+    pub grid_density: f32,
+    // Flags packed as u32 (bools aren't valid uniform scalar types in WGSL)
+    pub doppler_enabled: u32,
+    pub grid_enabled: u32,
+    pub planet_count: u32,
+    pub steps: u32,
+    pub _pad4: f32,
+    pub _pad5: f32,
+}
+
+impl Default for BlackHoleUniforms {
+    fn default() -> Self {
+        Self {
+            eye: Vec3::new(0.0, 0.0, 30.0),
+            _pad0: 0.0,
+            forward: Vec3::new(0.0, 0.0, -1.0),
+            _pad1: 0.0,
+            right: Vec3::new(1.0, 0.0, 0.0),
+            _pad2: 0.0,
+            up: Vec3::new(0.0, 1.0, 0.0),
+            fov: 1.0,
+            resolution: Vec2::new(1280.0, 720.0),
+            time: 0.0,
+            _pad3: 0.0,
+            rs: 1.0,
+            disk_inner: 3.0,
+            disk_outer: 15.0,
+            disk_tilt: 1.318,
+            disk_brightness: 1.0,
+            disk_rotation_speed: 0.5,
+            doppler_strength: 1.0,
+            star_intensity: 1.0,
+            skybox_intensity: 0.0,
+            grid_density: 1.0,
+            doppler_enabled: 1,
+            grid_enabled: 0,
+            planet_count: 0,
+            steps: 300,
+            _pad4: 0.0,
+            _pad5: 0.0,
+        }
+    }
+}
+
+/// One planet's data, uploaded in a storage buffer (binding 3).
+#[derive(Clone, Copy, ShaderType, Default)]
+pub struct SphereData {
+    pub center: Vec3,
+    pub radius: f32,
+    pub color: Vec3,
+    pub emissive: u32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+}
+
+pub const MAX_PLANETS: usize = 32;
+
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct BlackHoleMaterial {
     #[uniform(0)]
-    pub time: f32,
+    pub uniforms: BlackHoleUniforms,
+    // Texture at binding 1 + its matching sampler at binding 2. The derive
+    // requires the texture and sampler attributes to live on the same field.
+    #[texture(1)]
+    #[sampler(2)]
+    pub skybox: Option<Handle<Image>>,
+    #[storage(3, read_only)]
+    pub planets: Handle<ShaderBuffer>,
 }
 
 impl Material2d for BlackHoleMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/black_hole.wgsl".into()
+    }
+}
+
+impl Default for BlackHoleMaterial {
+    fn default() -> Self {
+        Self {
+            uniforms: BlackHoleUniforms::default(),
+            skybox: None,
+            planets: Handle::default(),
+        }
     }
 }
