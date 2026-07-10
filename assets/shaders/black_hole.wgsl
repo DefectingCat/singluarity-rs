@@ -1,4 +1,5 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
+#import "shaders/ray_gen.wgsl"
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -30,7 +31,11 @@ struct BlackHoleUniforms {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Prove the camera basis + uniforms flow: tint by eye direction.
-    let n = normalize(uniforms.eye.xyz);
-    return vec4<f32>(abs(n) * 0.5 + 0.3, 1.0);
+    // in.uv is [0,1] across the quad. Center and flip y, apply aspect.
+    let aspect = uniforms.resolution.x / uniforms.resolution.y;
+    var uv = (in.uv * 2.0 - 1.0);
+    uv.x *= aspect;
+    let dir = ray_direction(uv);
+    // Visualize ray direction as a color (sanity check).
+    return vec4<f32>(abs(dir), 1.0);
 }
