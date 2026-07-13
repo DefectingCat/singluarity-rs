@@ -35,7 +35,9 @@ pub fn ui_system(
                 });
                 egui::CollapsingHeader::new("Renderer").show(ui, |ui| {
                     ui.add(egui::Slider::new(&mut params.steps, 50..=600).text("Steps"));
-                    ui.add(egui::Slider::new(&mut params.render_scale, 0.5..=1.0).text("Render scale"));
+                    // NOTE: render_scale is intentionally not exposed — it isn't wired
+                    // to a real sub-resolution render target in Phase 1 (the full-screen
+                    // quad always renders at window resolution). Lower `Steps` to gain FPS.
                 });
                 egui::CollapsingHeader::new("Background").show(ui, |ui| {
                     ui.add(egui::Slider::new(&mut params.star_intensity, 0.0..=3.0).text("Star intensity"));

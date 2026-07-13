@@ -3,6 +3,11 @@ use bevy::sprite_render::Material2dPlugin;
 
 use super::material::BlackHoleMaterial;
 
+/// Marks the full-screen quad so the resize system can find and rescale it
+/// when the window's aspect ratio changes (the mesh is built once at startup).
+#[derive(Component)]
+struct FullscreenQuad;
+
 pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
@@ -16,7 +21,7 @@ impl Plugin for BlackHolePlugin {
             .add_systems(Startup, crate::scene::planets::spawn_default_planet)
             .add_systems(
                 Update,
-                (crate::camera::orbit_controller, mirror_params),
+                (crate::camera::orbit_controller, mirror_params, fit_quad_to_window),
             )
             .add_systems(Update, crate::scene::planets::upload_planets)
             // bevy_egui 0.41 requires UI systems to run inside the egui context
@@ -36,12 +41,32 @@ fn spawn_fullscreen_quad(
         Err(_) => return,
     };
     let aspect = win.width() / win.height();
+    // The mesh is a unit square (2x2 covers [-1,1]); we rescale via Transform
+    // in fit_quad_to_window whenever the aspect changes.
     commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0 * aspect, 2.0))),
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(materials.add(BlackHoleMaterial::default())),
-        Transform::default(),
+        Transform::default().with_scale(Vec3::new(aspect, 1.0, 1.0)),
+        FullscreenQuad,
     ));
     commands.spawn(Camera2d);
+}
+
+/// Rescale the full-screen quad so it always covers the camera's view, even
+/// after the window is resized. Camera2d's default projection spans y∈[-1,1]
+/// and x∈[-aspect, aspect]; scaling the unit quad by (aspect, 1, 1) fills it.
+fn fit_quad_to_window(window: Query<&Window>, mut quad: Query<&mut Transform, With<FullscreenQuad>>) {
+    let win = match window.single() {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let aspect = win.width() / win.height();
+    for mut transform in &mut quad {
+        // Only mutate on change to avoid spamming change detection.
+        if transform.scale.x != aspect {
+            transform.scale.x = aspect;
+        }
+    }
 }
 
 fn mirror_params(
