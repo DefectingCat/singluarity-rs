@@ -4,6 +4,7 @@
 #import "shaders/stars.wgsl"
 #import "shaders/disk.wgsl"
 #import "shaders/planets.wgsl"
+#import "shaders/grid.wgsl"
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -85,6 +86,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             accum_color += (1.0 - accum_alpha) * ph.xyz * ph.w;
             accum_alpha += (1.0 - accum_alpha) * ph.w;
             if (accum_alpha > 0.99) { break; }
+        }
+
+        if (uniforms.grid_enabled != 0u) {
+            let g = grid_hit(prev, new_pos);
+            if (g.x + g.y + g.z > 0.0) {
+                accum_color += g; // additive
+            }
         }
 
         prev = new_pos;
