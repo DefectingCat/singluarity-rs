@@ -68,9 +68,11 @@ pub fn orbit_controller(
     }
     if mouse.pressed(MouseButton::Left) {
         for ev in motion.read() {
-            camera.yaw -= ev.delta.x * 0.005;
+            // View-follows-cursor: dragging right rotates the view right,
+            // dragging down tilts it down (inverts the old grab-the-scene mapping).
+            camera.yaw += ev.delta.x * 0.005;
             // Clamp pitch to avoid flipping.
-            camera.pitch = (camera.pitch + ev.delta.y * 0.005).clamp(0.05, std::f32::consts::PI - 0.05);
+            camera.pitch = (camera.pitch - ev.delta.y * 0.005).clamp(0.05, std::f32::consts::PI - 0.05);
         }
     }
     for ev in wheel.read() {
