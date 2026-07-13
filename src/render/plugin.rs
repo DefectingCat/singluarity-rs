@@ -8,6 +8,7 @@ pub struct BlackHolePlugin;
 impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<crate::camera::OrbitCamera>()
+            .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())

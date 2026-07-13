@@ -24,6 +24,10 @@ impl Default for OrbitCamera {
     }
 }
 
+/// Set by the UI system each frame; the orbit controller ignores input when true.
+#[derive(Resource, Default)]
+pub struct WantsPointer(pub bool);
+
 impl OrbitCamera {
     /// Compute the camera eye position and an orthonormal basis (forward/right/up)
     /// in Bevy's right-handed Y-up coordinate system. The black hole sits at origin.
@@ -50,11 +54,18 @@ impl OrbitCamera {
 }
 
 pub fn orbit_controller(
+    wants: Res<WantsPointer>,
     mut camera: ResMut<OrbitCamera>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
 ) {
+    if wants.0 {
+        // egui is using the pointer: drain events so they don't pile up, and ignore.
+        motion.clear();
+        wheel.clear();
+        return;
+    }
     if mouse.pressed(MouseButton::Left) {
         for ev in motion.read() {
             camera.yaw -= ev.delta.x * 0.005;
