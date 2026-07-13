@@ -17,7 +17,11 @@ impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
             yaw: 0.0,
-            pitch: 1.3,       // ~75 deg — slightly above the disk plane
+            // Keep away from the π/2 gimbal pole: near the pole the world-Y (yaw)
+            // axis points almost straight out of the screen, so horizontal drag
+            // degenerates into an in-plane roll instead of a clean turn around
+            // the hole. ~0.7 rad (40°) is a 3/4 view with a comfortable yaw axis.
+            pitch: 0.7,
             distance: 30.0,
             fov: 1.0,         // radians
         }
@@ -76,8 +80,9 @@ pub fn orbit_controller(
         }
     }
     for ev in wheel.read() {
-        // Zoom: multiply distance by a factor of the scroll amount.
-        camera.distance = (camera.distance * (1.0 + ev.y * 0.1)).clamp(2.6, 500.0);
+        // Scroll up zooms IN: wint's +y (scroll up) must shrink distance, hence
+        // the negation. The old sign gave natural/inverted scrolling.
+        camera.distance = (camera.distance / (1.0 + ev.y * 0.1)).clamp(2.6, 500.0);
         // 2.6 ≈ bcrit; don't let the camera pass through the shadow.
     }
 }
