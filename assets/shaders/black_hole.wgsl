@@ -50,7 +50,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
     var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
 
-    let dt = max(length(uniforms.eye.xyz), 20.0) / f32(uniforms.steps);
+    // Total path length to integrate: enough to go from the camera, past the
+    // hole, and far enough beyond to count as escaped. We size dt so that
+    // `steps` steps cover this distance. (The original dt=|eye|/steps only
+    // traveled |eye| units total — never reaching capture or escape — so
+    // every ray fell through to accum=black.)
+    let eye_dist = length(uniforms.eye.xyz);
+    let escape_r = max(eye_dist * 2.0, 100.0);     // "escaped" = clearly past the hole
+    let total_path = eye_dist + escape_r;          // go in, through, and out
+    let dt = total_path / f32(uniforms.steps);
     let steps = uniforms.steps;
 
     // Front-to-back compositing.
@@ -64,7 +72,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             // Captured: whatever we've composited so far is the result.
             break;
         }
-        if (r > 1000.0) {
+        if (r > escape_r) {
             // Escaped: add background along the (disk-local) final dir.
             // Rotate back to world for the sky/stars sample.
             let world_dir = normalize(rot_x(d, uniforms.disk_tilt));

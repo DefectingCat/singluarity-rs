@@ -1,7 +1,9 @@
 #define_import_path singularity::planets
 
+#import singularity::disk::rot_x
+
 struct SphereData {
-    center: vec4<f32>,   // xyz = center, w = radius
+    center: vec4<f32>,   // xyz = center (world space), w = radius
     color: vec4<f32>,    // xyz = color, w = emissive flag (u32 reinterpreted; we just check > 0.5)
 };
 
@@ -11,13 +13,18 @@ struct SphereData {
 
 // Test the segment prev->cur against all planets. Returns hit color & alpha,
 // or (0,0,0,0) if no hit. `dir` is the ray direction (for shading).
+// `prev`/`cur` are in DISK-LOCAL space (the caller rotates eye/dir by -disk_tilt
+// before integrating), so we rotate each planet's world-space center into
+// disk-local space here for a consistent intersection test.
 fn planet_hit(prev: vec3<f32>, cur: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
     var nearest_t = 1e9;
     var nearest_col = vec3<f32>(0.0);
     var found = false;
     for (var i: u32 = 0u; i < uniforms.planet_count; i = i + 1u) {
         let s = planets[i];
-        let center = s.center.xyz;
+        // Planet centers are stored in world space; rotate into disk-local space
+        // to match the ray's coordinate system.
+        let center = rot_x(s.center.xyz, -uniforms.disk_tilt);
         let radius = s.center.w;
         // Ray-sphere intersection for the segment.
         let seg = cur - prev;

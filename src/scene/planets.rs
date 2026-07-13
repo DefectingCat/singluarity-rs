@@ -44,7 +44,6 @@ pub fn upload_planets(
     // Build (or rebuild) the ShaderBuffer and share its handle across materials.
     let buffer = ShaderBuffer::from(data);
     for (_, mat) in materials.iter_mut() {
-        // Replace the handle each frame (simple, correct; cheap for one material).
         mat.planets = buffers.add(buffer.clone());
     }
 }
