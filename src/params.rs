@@ -3,6 +3,7 @@ use bevy::prelude::*;
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
+#[allow(dead_code)] // render_scale + spin are reserved for Phase 2 (Kerr) / future work
 pub struct BlackHoleParams {
     // Physics (natural units, Rs = 1)
     pub rs: f32,
