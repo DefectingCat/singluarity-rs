@@ -1,5 +1,7 @@
 // Builds a world-space camera ray direction for the current pixel.
 // `uv` is the pixel coordinate normalized to [-1,1] with aspect correction.
+#define_import_path singularity::ray_gen
+
 fn ray_direction(uv: vec2<f32>) -> vec3<f32> {
     // NOTE: `fov` is packed into the `.w` of `up` in BlackHoleUniforms
     // (the Rust struct lays out `up: Vec3` + `fov: f32` as one vec4 block).

@@ -1,4 +1,6 @@
 // Hash-based procedural stars on the unit sphere. Returns RGB radiance.
+#define_import_path singularity::stars
+
 fn hash13(p: vec3<f32>) -> f32 {
     var q = vec3<f32>(dot(p, vec3<f32>(127.1, 311.7, 74.7)),
                       dot(p, vec3<f32>(269.5, 183.3, 246.1)),

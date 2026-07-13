@@ -1,3 +1,5 @@
+#define_import_path singularity::geodesic
+
 const R_ESCAPE: f32 = 1000.0;
 
 struct Deriv {

@@ -1,5 +1,6 @@
 // Disk plane is the xz-plane in world space, tilted by `disk_tilt` around the
 // x-axis. We work in "disk-local" coordinates by rotating the ray.
+#define_import_path singularity::disk
 
 // Rotate a vector around the X axis by angle a.
 fn rot_x(v: vec3<f32>, a: f32) -> vec3<f32> {

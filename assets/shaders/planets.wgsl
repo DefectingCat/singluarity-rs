@@ -1,8 +1,12 @@
+#define_import_path singularity::planets
+
 struct SphereData {
     center: vec4<f32>,   // xyz = center, w = radius
     color: vec4<f32>,    // xyz = color, w = emissive flag (u32 reinterpreted; we just check > 0.5)
 };
 
+// The storage binding is declared here as part of the planets module; it lives
+// in the material's bind group (group 2 = #{MATERIAL_BIND_GROUP}).
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var<storage, read> planets: array<SphereData>;
 
 // Test the segment prev->cur against all planets. Returns hit color & alpha,

@@ -2,6 +2,7 @@
 // (negative y in disk-local space). Dips below the disk toward the center —
 // the classic gravity-well visualization. Traced through curved spacetime, so
 // grid lines near the hole bend dramatically.
+#define_import_path singularity::grid
 
 fn flamm_depth(r: f32) -> f32 {
     if (r <= uniforms.rs) { return 0.0; }
