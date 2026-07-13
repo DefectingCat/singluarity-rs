@@ -12,16 +12,25 @@ pub struct Planet {
     pub emissive: bool,
 }
 
-/// Collects all Planet components, builds a fixed-size Vec<SphereData> (padded
-/// to MAX_PLANETS), wraps it in a ShaderBuffer, and ensures every BlackHoleMaterial
-/// points its `planets` handle at that buffer. Also updates planet_count in params.
+/// Collects all Planet components, writes them into the shared MAX_PLANETS-sized
+/// `ShaderBuffer` that the material already binds, and updates `planet_count`.
 ///
-/// NOTE: the material field is `Handle<ShaderBuffer>` (Bevy 0.19 AsBindGroup
-/// requirement). We create one ShaderBuffer asset and have all materials share it.
+/// CRITICAL: we must NOT allocate a new `ShaderBuffer` (and a new handle) each
+/// frame. The `#[storage(3, read_only)]` binding resolves the handle via
+/// `RenderAssets<GpuShaderBuffer>::get(handle)` and returns
+/// `AsBindGroupError::RetryNextUpdate` if the GPU asset for *that exact handle*
+/// isn't ready yet. A freshly-added asset has no GPU asset yet, so reassigning
+/// the handle every frame makes the fullscreen quad's draw get skipped every
+/// frame — the screen shows only the camera clear color (grey).
+///
+/// Instead, mutate the existing asset in place. `GpuShaderBuffer::prepare_asset`
+/// (bevy_render 0.19 `storage.rs`) sees the changed CPU data, reuses the same
+/// GPU buffer, and `write_buffer`s the new contents — the handle stays stable,
+/// the GPU asset stays ready, and the draw proceeds.
 pub fn upload_planets(
     planets: Query<&Planet>,
     mut params: ResMut<crate::params::BlackHoleParams>,
-    mut materials: ResMut<Assets<crate::render::material::BlackHoleMaterial>>,
+    materials: Res<Assets<crate::render::material::BlackHoleMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     let mut data: Vec<SphereData> = planets
@@ -41,10 +50,15 @@ pub fn upload_planets(
     data.resize(MAX_PLANETS, SphereData::default());
     params.planet_count = planets.iter().count().min(MAX_PLANETS) as u32;
 
-    // Build (or rebuild) the ShaderBuffer and share its handle across materials.
-    let buffer = ShaderBuffer::from(data);
-    for (_, mat) in materials.iter_mut() {
-        mat.planets = buffers.add(buffer.clone());
+    // Write into the existing buffer asset(s) the materials already reference.
+    // The startup system pre-creates exactly one such buffer; we find it by the
+    // materials' handles and mutate in place — never reallocate the handle.
+    // set_data moves a Vec<T> (encase treats Vec<T> as a runtime-sized array),
+    // matching the official bevy 0.19 storage_buffer example.
+    for (_, mat) in materials.iter() {
+        if let Some(mut buffer) = buffers.get_mut(&mat.planets) {
+            buffer.set_data(data.clone());
+        }
     }
 }
 

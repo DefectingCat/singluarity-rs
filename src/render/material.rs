@@ -95,7 +95,14 @@ pub struct BlackHoleMaterial {
     pub uniforms: BlackHoleUniforms,
     // Texture at binding 1 + its matching sampler at binding 2. The derive
     // requires the texture and sampler attributes to live on the same field.
-    #[texture(1)]
+    // `dimension = "cube"` is REQUIRED: skybox.wgsl declares this binding as
+    // `texture_cube<f32>`. The derive defaults to D2, which made the bind-group
+    // layout (D2) disagree with the shader (Cube) — the pipeline failed to
+    // specialize and the fullscreen quad silently drew nothing, leaving only
+    // the camera clear color. Matching the dimension to Cube lets the pipeline
+    // compile; when no cubemap is set, Bevy binds its 1x1 cube fallback (gated
+    // out by `skybox_intensity > 0` in the shader anyway).
+    #[texture(1, dimension = "cube")]
     #[sampler(2)]
     pub skybox: Option<Handle<Image>>,
     #[storage(3, read_only)]
