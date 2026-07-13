@@ -8,6 +8,7 @@
 #import singularity::disk::{rot_x, disk_hit, disk_color}
 #import singularity::planets::{SphereData, planets, planet_hit}
 #import singularity::grid::{flamm_depth, grid_hit}
+#import singularity::skybox::skybox_color
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -64,11 +65,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
         if (r > 1000.0) {
-            // Escaped: add background stars along the (disk-local) final dir.
-            // Rotate back to world for the star sample.
+            // Escaped: add background along the (disk-local) final dir.
+            // Rotate back to world for the sky/stars sample.
             let world_dir = normalize(rot_x(d, uniforms.disk_tilt));
-            let star = star_color(world_dir, uniforms.star_intensity);
-            accum_color += (1.0 - accum_alpha) * star;
+            var bg = vec3<f32>(0.0);
+            // Procedural stars are always layered in.
+            bg += star_color(world_dir, uniforms.star_intensity);
+            // Optional cubemap skybox (gated so we never sample the fallback 1x1 texture).
+            if (uniforms.skybox_intensity > 0.0) {
+                bg += skybox_color(world_dir) * uniforms.skybox_intensity;
+            }
+            accum_color += (1.0 - accum_alpha) * bg;
             accum_alpha = 1.0;
             break;
         }
