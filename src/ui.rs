@@ -52,6 +52,27 @@ pub fn ui_system(
                     ui.checkbox(&mut params.grid_enabled, "Enabled");
                     ui.add_enabled(params.grid_enabled, egui::Slider::new(&mut params.grid_density, 0.1..=4.0).text("Density"));
                 });
+                egui::CollapsingHeader::new("Quality")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        use crate::params::BloomQuality;
+                        let mut q = params.bloom_quality;
+                        egui::ComboBox::from_label("Bloom quality")
+                            .selected_text(format!("{:?}", q))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut q, BloomQuality::Off, "Off");
+                                ui.selectable_value(&mut q, BloomQuality::Low, "Low");
+                                ui.selectable_value(&mut q, BloomQuality::Medium, "Medium");
+                                ui.selectable_value(&mut q, BloomQuality::High, "High");
+                            });
+                        params.bloom_quality = q;
+                        ui.add_enabled(q != BloomQuality::Off, egui::Slider::new(&mut params.bloom_threshold, 0.0..=3.0).text("Bloom threshold"));
+                        ui.add_enabled(q != BloomQuality::Off, egui::Slider::new(&mut params.bloom_strength, 0.0..=2.0).text("Bloom strength"));
+                        ui.add(egui::Slider::new(&mut params.exposure, 0.5..=3.0).text("Exposure"));
+                        ui.add(egui::Slider::new(&mut params.render_scale, 0.25..=1.0).text("Resolution scale"));
+                        ui.checkbox(&mut params.star_aa, "Anti-aliased stars");
+                        ui.label("MSAA is decorative on a fullscreen shader (no geometry edges to sample).");
+                    });
             });
         // egui captures pointer when the cursor is over a window or being interacted with.
         wants.0 = ctx.egui_wants_pointer_input();

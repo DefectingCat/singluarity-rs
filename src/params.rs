@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 /// Bloom pyramid depth (number of bloom textures).
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BloomQuality {
     Off,     // no bloom, scene-only ACES composite
     Low,     // 1 level: brightpass → composite (soft halo)
