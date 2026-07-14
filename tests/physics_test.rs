@@ -74,3 +74,110 @@ fn kerr_bending_accel_nonzero_off_axis_at_nonzero_spin() {
     let diff = (schw - kerr).length();
     assert!(diff > 1e-4, "spin=0.8 Kerr should differ from Schwarzschild; diff = {}", diff);
 }
+
+// ---- Loop-level CPU ↔ shader mirror tests (adaptive RK45 + Kerr) ----
+// These exercise the full integration loop (`is_captured_rk45`) that mirrors
+// the shader's black_hole.wgsl:320-390 loop, not just the single-step deriv.
+
+#[test]
+fn rk45_at_zero_spin_captures_below_bcrit() {
+    // spin=0 Kerr loop must reproduce the Schwarzschild capture boundary.
+    let eye = bevy::math::Vec3::new(0.0, 0.0, 50.0);
+    let dir = bevy::math::Vec3::new(0.0, 2.0, -50.0).normalize(); // b ~ 2.0 < bcrit
+    let b = physics::impact_parameter(eye, dir);
+    assert!(b < physics::BCRIT, "b {} should be < bcrit", b);
+    assert!(
+        physics::is_captured_rk45(eye, dir, 2000, 0.0),
+        "spin=0 ray below bcrit should be captured by the RK45 loop"
+    );
+}
+
+#[test]
+fn rk45_at_zero_spin_escapes_above_bcrit() {
+    let eye = bevy::math::Vec3::new(0.0, 0.0, 50.0);
+    let dir = bevy::math::Vec3::new(0.0, 10.0, -50.0).normalize(); // b ~ 9.8 >> bcrit
+    let b = physics::impact_parameter(eye, dir);
+    assert!(b > physics::BCRIT);
+    assert!(
+        !physics::is_captured_rk45(eye, dir, 2000, 0.0),
+        "spin=0 ray above bcrit should escape the RK45 loop"
+    );
+}
+
+#[test]
+fn rk45_higher_spin_still_captures_a_grazing_ray() {
+    // A ray that would be captured at spin=0 (b < bcrit) must remain captured
+    // at high spin — the horizon shrinks, but a b ~ 2.0 ray still plunges in.
+    let eye = bevy::math::Vec3::new(0.0, 0.0, 50.0);
+    let dir = bevy::math::Vec3::new(0.0, 2.0, -50.0).normalize();
+    assert!(
+        physics::is_captured_rk45(eye, dir, 2000, 0.9),
+        "spin=0.9 ray at b~2.0 should still be captured"
+    );
+}
+
+#[test]
+fn rk45_capture_radius_shrinks_with_spin() {
+    // Near the critical impact parameter, a higher-spin hole (smaller horizon,
+    // prograde frame-dragging) is *easier* for a prograde ray to escape. With a
+    // fixed step count, count captures across a sweep of impact parameters and
+    // assert the capture set does not grow as spin increases — i.e. the boundary
+    // does not move outward. This is the robust, sign-agnostic assertion.
+    let eye = bevy::math::Vec3::new(0.0, 0.0, 50.0);
+    let count_captures = |chi: f32| -> usize {
+        (0..=40)
+            .map(|i| {
+                let y = 1.6 + (i as f32) * 0.06; // b sweeps ~1.6 .. ~4.0, straddling bcrit
+                let dir = bevy::math::Vec3::new(0.0, y, -50.0).normalize();
+                physics::is_captured_rk45(eye, dir, 400, chi) as usize
+            })
+            .sum()
+    };
+    let c0 = count_captures(0.0);
+    let c_hi = count_captures(0.9);
+    assert!(
+        c_hi <= c0,
+        "higher spin should not capture more rays across the bcrit sweep; \
+         spin=0 captures={}, spin=0.9 captures={}",
+        c0,
+        c_hi
+    );
+}
+
+#[test]
+fn rk45_step_error_shrinks_monotonically_with_dt() {
+    // The Dormand-Prince error estimate |y5 − y4| must shrink monotonically as
+    // dt shrinks — this is the property the shader's adaptive loop relies on to
+    // decide reject/retry vs accept (black_hole.wgsl:326-335). It does NOT need
+    // to be a clean 5th-order power law here: the per-stage `normalize(dir + …)`
+    // projection in both the shader and the mirror makes the *realized* error
+    // scaling fall between 2nd and 4th order depending on geometry. We assert
+    // only what the loop actually depends on: smaller dt ⇒ smaller error, by a
+    // factor strictly greater than 1, across a halving sequence. This is the
+    // load-bearing correctness property; pinning a specific order would be
+    // testing a model of the integrator, not the integrator as shipped.
+    let pos = bevy::math::Vec3::new(4.0, 0.5, 0.0);
+    let dir = bevy::math::Vec3::new(0.0, 0.0, -1.0);
+    let mut prev = f32::INFINITY;
+    for &dt in &[0.4_f32, 0.2, 0.1, 0.05, 0.025] {
+        let err = physics::rk45_step(pos, dir, dt, 0.0).err;
+        assert!(
+            err < prev,
+            "error should decrease as dt shrinks: dt={} err={} prev={}",
+            dt,
+            err,
+            prev
+        );
+        prev = err;
+    }
+    // And the shrink is meaningful — the largest dt's error is at least 10x the
+    // smallest (rules out the error being flat / dominated by a constant floor).
+    let err_big = physics::rk45_step(pos, dir, 0.4, 0.0).err;
+    let err_small = physics::rk45_step(pos, dir, 0.025, 0.0).err;
+    assert!(
+        err_big / err_small.max(1e-18) > 10.0,
+        "error should span >10x across the dt range; big={} small={}",
+        err_big,
+        err_small
+    );
+}

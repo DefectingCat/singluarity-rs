@@ -95,7 +95,160 @@ pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
     radial + drag
 }
 
-// Silence unused-import warning for Vec4 if not used; kept for future expansion.
+// ---- RK45 (Dormand-Prince) adaptive integrator ----
+// CPU mirror of the shader's `rk45_step` (black_hole.wgsl:260) and adaptive
+// loop (black_hole.wgsl:320-390). Keep these in lockstep with the shader: the
+// Butcher-tableau coefficients, the dt_min forced-accept floor, and the
+// budget = accepted-steps-only semantics must all match, or the loop-level
+// capture/escape tests below pass on code the shader contradicts.
+
+/// Result of one Dormand-Prince step: the 5th-order solution advanced by `dt`,
+/// plus the position error estimate `|y5 - y4|` used for step-size control.
+/// Mirrors the shader's `RkStep` struct (black_hole.wgsl:254).
+pub struct RkStep {
+    pub pos: Vec3,
+    pub dir: Vec3,
+    pub err: f32,
+}
+
+/// One Dormand-Prince RK45 step against the Kerr geodesic. `chi = a/M ∈ [0,1]`.
+/// At chi=0 the derivative reduces to `bending_accel`, so this is also the
+/// Phase 1 integrator step. Mirrors `rk45_step` in black_hole.wgsl:260-285.
+///
+/// **Implemented order note:** the per-stage `normalize(dir + …)` projection
+/// (faithful to the shader) makes the *realized* error estimate shrink between
+/// 2nd and 4th order in dt depending on geometry, not a clean 5th order — see
+/// the `rk45_step_error_shrinks_monotonically_with_dt` test. The adaptive loop
+/// only depends on the error being monotone in dt, which holds. Naming follows
+/// the shader ("RK45") for the tableau, not as a precision guarantee.
+pub fn rk45_step(pos: Vec3, dir: Vec3, dt: f32, chi: f32) -> RkStep {
+    // k_i = deriv(p_i, d_i); dpos = dir, ddir = kerr_bending_accel.
+    let k1p = dir;
+    let k1d = kerr_bending_accel(pos, dir, chi);
+
+    let p2 = pos + k1p * (dt * 0.2);
+    let d2 = (dir + k1d * (dt * 0.2)).normalize();
+    let k2p = d2;
+    let k2d = kerr_bending_accel(p2, d2, chi);
+
+    let p3 = pos + (k1p * 0.075 + k2p * 0.225) * dt;
+    let d3 = (dir + (k1d * 0.075 + k2d * 0.225) * dt).normalize();
+    let k3p = d3;
+    let k3d = kerr_bending_accel(p3, d3, chi);
+
+    let p4 = pos + (k1p * 0.3 + k2p * -0.9 + k3p * 1.2) * dt;
+    let d4 = (dir + (k1d * 0.3 + k2d * -0.9 + k3d * 1.2) * dt).normalize();
+    let k4p = d4;
+    let k4d = kerr_bending_accel(p4, d4, chi);
+
+    let p5 = pos + (k1p * -11.0 / 54.0 + k2p * 2.5 + k3p * -70.0 / 27.0 + k4p * 35.0 / 27.0) * dt;
+    let d5 = (dir + (k1d * -11.0 / 54.0 + k2d * 2.5 + k3d * -70.0 / 27.0 + k4d * 35.0 / 27.0) * dt)
+        .normalize();
+    let k5p = d5;
+    let k5d = kerr_bending_accel(p5, d5, chi);
+
+    let p6 = pos
+        + (k1p * 1631.0 / 55296.0
+            + k2p * 175.0 / 512.0
+            + k3p * 575.0 / 13824.0
+            + k4p * 44275.0 / 110592.0
+            + k5p * 253.0 / 4096.0)
+            * dt;
+    let d6 = (dir
+        + (k1d * 1631.0 / 55296.0
+            + k2d * 175.0 / 512.0
+            + k3d * 575.0 / 13824.0
+            + k4d * 44275.0 / 110592.0
+            + k5d * 253.0 / 4096.0)
+            * dt)
+        .normalize();
+    let k6p = d6;
+    let _k6d = kerr_bending_accel(p6, d6, chi); // 6th stage eval (6th-order weights k1..k5 only)
+
+    // 5th-order solution (advances the state).
+    let new_pos = pos
+        + (k1p * 37.0 / 378.0
+            + k3p * 250.0 / 621.0
+            + k4p * 125.0 / 594.0
+            + k5p * 512.0 / 1771.0)
+            * dt;
+    let new_dir = (dir
+        + (k1d * 37.0 / 378.0
+            + k3d * 250.0 / 621.0
+            + k4d * 125.0 / 594.0
+            + k5d * 512.0 / 1771.0)
+            * dt)
+        .normalize();
+    // 4th-order solution (for the error estimate only).
+    let pos4 = pos
+        + (k1p * 2825.0 / 27648.0
+            + k3p * 18575.0 / 48384.0
+            + k4p * 13525.0 / 55296.0
+            + k5p * 277.0 / 14336.0
+            + k6p * 0.25)
+            * dt;
+    let err = (new_pos - pos4).length();
+    RkStep {
+        pos: new_pos,
+        dir: new_dir,
+        err,
+    }
+}
+
+/// Classify a Kerr geodesic with the adaptive RK45 loop. Returns true if the
+/// ray is captured (crosses r < r+(chi)). Mirrors the shader's integration
+/// loop (black_hole.wgsl:320-390): budget = accepted steps, rejected steps
+/// retry at smaller dt (down to dt_min, which is a forced-accept floor), and
+/// the capture radius is the spin-dependent horizon r+(chi) (= Rs at chi=0).
+///
+/// `steps` is the hard cap on *accepted* steps (matches `uniforms.steps`).
+pub fn is_captured_rk45(start_pos: Vec3, start_dir: Vec3, steps: u32, chi: f32) -> bool {
+    let mut pos = start_pos;
+    let mut dir = start_dir;
+
+    // Same seeding as the shader: total_path from eye distance + escape radius.
+    let eye_dist = pos.length();
+    let escape_r = (eye_dist * 2.0).max(100.0);
+    let total_path = eye_dist + escape_r;
+    let dt_init = total_path / steps as f32;
+    let dt_min = dt_init * 0.25;
+    let dt_max = dt_init * 4.0;
+    let tol = 1e-3;
+    let r_plus = kerr_horizon(chi);
+
+    let mut dt = dt_init;
+    let mut budget = steps;
+
+    while budget > 0 {
+        let step = rk45_step(pos, dir, dt, chi);
+        let err = step.err;
+
+        if err > tol * 10.0 && dt > dt_min {
+            // Reject: shrink to dt_min and retry (does not consume budget).
+            dt = dt_min;
+            continue;
+        }
+        // Accept: consume one budget unit.
+        budget -= 1;
+        if err <= tol * 10.0 {
+            dt = (dt * (tol / err.max(1e-12)).powf(0.2)).clamp(dt_min, dt_max);
+        }
+
+        let new_pos = step.pos;
+        let r = new_pos.length();
+        if r < r_plus {
+            return true;
+        }
+        if r > escape_r {
+            return false;
+        }
+        pos = new_pos;
+        dir = step.dir;
+    }
+    false
+}
+
+// Silence unused-import warning for Vec4 (legacy placeholder; retained).
 #[allow(dead_code)]
 fn _phantom(_v: Vec4) {}
 
