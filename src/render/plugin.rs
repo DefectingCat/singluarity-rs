@@ -65,6 +65,16 @@ pub struct BlurCamera;
 #[derive(Component)]
 pub struct BlurQuad;
 
+/// Bloom pyramid textures bloom_1, bloom_2 (bloom_0 is BloomTarget0).
+#[derive(Component)]
+pub struct BloomTarget1(pub Handle<Image>);
+#[derive(Component)]
+pub struct BloomTarget2(pub Handle<Image>);
+
+/// The final up-sampled bloom texture read by the composite pass.
+#[derive(Component)]
+pub struct BloomFinalTarget(pub Handle<Image>);
+
 pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
@@ -75,6 +85,7 @@ impl Plugin for BlackHolePlugin {
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::UpscaleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
+            .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_default_planet)
@@ -101,6 +112,7 @@ fn spawn_fullscreen_quad(
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
     mut upscale_materials: ResMut<Assets<crate::render::material::UpscaleMaterial>>,
     mut bp_materials: ResMut<Assets<crate::render::material::BrightPassMaterial>>,
+    mut blur_materials: ResMut<Assets<crate::render::material::BlurMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window>,
@@ -195,6 +207,104 @@ fn spawn_fullscreen_quad(
         BrightPassCamera,
         Nudgable,
         RenderLayers::layer(2),
+    ));
+
+    // --- Blur pyramid (bloom stages [3]/[4]): bloom_1, bloom_2 + down/up passes ---
+    let b1w = ((w as f32 * 0.25) as u32).max(1);
+    let b1h = ((h as f32 * 0.25) as u32).max(1);
+    let b2w = ((w as f32 * 0.125) as u32).max(1);
+    let b2h = ((h as f32 * 0.125) as u32).max(1);
+    let bloom1 = images.add(Image::new_target_texture(
+        b1w, b1h, TextureFormat::Rgba16Float, None,
+    ));
+    let bloom2 = images.add(Image::new_target_texture(
+        b2w, b2h, TextureFormat::Rgba16Float, None,
+    ));
+    commands.spawn(BloomTarget1(bloom1.clone()));
+    commands.spawn(BloomTarget2(bloom2.clone()));
+
+    // Down pass 0→1: samples bloom0 (half-res), writes bloom1 (quarter-res).
+    let down01_texel = Vec2::new(1.0 / bw as f32, 1.0 / bh as f32);
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
+            uniform: crate::render::material::BlurUniform {
+                mode: 0, texel_size: down01_texel, blend: 0.0, _pad0: 0.0,
+            },
+            source: bloom0.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(b1w as f32 / 2.0, b1h as f32 / 2.0, 1.0)),
+        BlurQuad,
+        QuadScaleFactor(0.25, 0.25),
+        RenderLayers::layer(3),
+    ));
+    // Down pass 1→2: samples bloom1 (quarter), writes bloom2 (eighth).
+    let down12_texel = Vec2::new(1.0 / b1w as f32, 1.0 / b1h as f32);
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
+            uniform: crate::render::material::BlurUniform {
+                mode: 0, texel_size: down12_texel, blend: 0.0, _pad0: 0.0,
+            },
+            source: bloom1.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(b2w as f32 / 2.0, b2h as f32 / 2.0, 1.0)),
+        BlurQuad,
+        QuadScaleFactor(0.125, 0.125),
+        RenderLayers::layer(4),
+    ));
+    // Up pass 2→1: samples bloom2 (eighth), writes bloom1 (quarter).
+    let up21_texel = Vec2::new(1.0 / b2w as f32, 1.0 / b2h as f32);
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
+            uniform: crate::render::material::BlurUniform {
+                mode: 1, texel_size: up21_texel, blend: 0.6, _pad0: 0.0,
+            },
+            source: bloom2.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(b1w as f32 / 2.0, b1h as f32 / 2.0, 1.0)),
+        BlurQuad,
+        QuadScaleFactor(0.25, 0.25),
+        RenderLayers::layer(5),
+    ));
+    // Up pass 1→0: samples bloom1 (quarter), writes bloom_final (half).
+    let bfw = bw;
+    let bfh = bh;
+    let bloom_final = images.add(Image::new_target_texture(
+        bfw, bfh, TextureFormat::Rgba16Float, None,
+    ));
+    commands.spawn(BloomFinalTarget(bloom_final.clone()));
+    let up10_texel = Vec2::new(1.0 / b1w as f32, 1.0 / b1h as f32);
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
+            uniform: crate::render::material::BlurUniform {
+                mode: 1, texel_size: up10_texel, blend: 0.8, _pad0: 0.0,
+            },
+            source: bloom1.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(bfw as f32 / 2.0, bfh as f32 / 2.0, 1.0)),
+        BlurQuad,
+        QuadScaleFactor(0.5, 0.5),
+        RenderLayers::layer(6),
+    ));
+    // Cameras: down01=-18, down12=-17, up21=-16, up10=-15.
+    commands.spawn((
+        Camera2d, Camera { order: -18, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
+        RenderTarget::Image(bloom1.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(3),
+    ));
+    commands.spawn((
+        Camera2d, Camera { order: -17, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
+        RenderTarget::Image(bloom2.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(4),
+    ));
+    commands.spawn((
+        Camera2d, Camera { order: -16, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
+        RenderTarget::Image(bloom1.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(5),
+    ));
+    commands.spawn((
+        Camera2d, Camera { order: -15, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
+        RenderTarget::Image(bloom_final.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(6),
     ));
 
     // --- Upscale quad (draws offscreen Image to the window) ---

@@ -155,3 +155,29 @@ impl Material2d for BrightPassMaterial {
     }
 }
 
+/// Uniform for one blur pass (bloom stages [3]/[4]).
+#[derive(Clone, ShaderType)]
+pub struct BlurUniform {
+    pub mode: u32,           // 0 = downsample, 1 = upsample
+    pub texel_size: Vec2,
+    pub blend: f32,          // upsample blend factor (ignored for down)
+    pub _pad0: f32,
+}
+
+/// One pass of the bloom down/up pyramid. One material instance per pass
+/// (Bevy binds uniforms once per material, not per entity).
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct BlurMaterial {
+    #[uniform(0)]
+    pub uniform: BlurUniform,
+    #[texture(1)]
+    #[sampler(2)]
+    pub source: Handle<Image>,
+}
+
+impl Material2d for BlurMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/blur.wgsl".into()
+    }
+}
+
