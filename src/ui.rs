@@ -20,10 +20,17 @@ pub fn ui_system(
                         ui.add(egui::Slider::new(&mut camera.pitch, 0.05..=3.09).text("Pitch"));
                         ui.add(egui::Slider::new(&mut camera.fov, 0.3..=2.0).text("FOV"));
                     });
+                egui::CollapsingHeader::new("Black Hole")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.add(egui::Slider::new(&mut params.spin, 0.0..=1.0).text("Spin (χ)"));
+                        ui.label(format!("ISCO (disk inner): {:.3}", crate::physics::kerr_isco(params.spin)));
+                        ui.label(format!("Horizon r+: {:.3}", crate::physics::kerr_horizon(params.spin)));
+                    });
                 egui::CollapsingHeader::new("Accretion Disk")
                     .default_open(true)
                     .show(ui, |ui| {
-                        ui.add(egui::Slider::new(&mut params.disk_inner, 1.5..=6.0).text("Inner radius"));
+                        // disk_inner removed — now spin-derived (see Black Hole section).
                         ui.add(egui::Slider::new(&mut params.disk_outer, 6.0..=40.0).text("Outer radius"));
                         ui.add(egui::Slider::new(&mut params.disk_tilt, 0.0..=3.14).text("Tilt"));
                         ui.add(egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).text("Brightness"));
