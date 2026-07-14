@@ -110,12 +110,21 @@ struct Deriv {
 fn deriv(pos: vec3<f32>, dir: vec3<f32>) -> Deriv {
     let r = length(pos);
     let rs = uniforms.rs;
+    // Kerr spin. χ ∈ [0,1]; a = χ·M, M = Rs/2 = 0.5 (Rs=1).
+    let chi = uniforms.spin;
+    let m = 0.5;
+    let a = chi * m;
+    // Schwarzschild radial bending (identical to Phase 1 at χ=0).
     let h = cross(pos, dir);
     let h2 = dot(h, h);
     let r5 = max(r * r * r * r * r, 1e-6);
-    let dpos = dir;
-    let accel = -1.5 * rs * h2 / r5 * pos;
-    return Deriv(dpos, accel);
+    let radial = -1.5 * rs * h2 / r5 * pos;
+    // Frame-dragging (Lense-Thirring leading term). Spin axis = +Y.
+    let spin_axis = vec3<f32>(0.0, 1.0, 0.0);
+    let r3 = max(r * r * r, 1e-6);
+    let drag = 2.0 * m * a / r3 * cross(spin_axis, dir);
+    let accel = radial + drag;
+    return Deriv(dir, accel);
 }
 
 // --- disk ---
@@ -267,7 +276,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var prev = pos;
     for (var i: u32 = 0u; i < steps; i = i + 1u) {
         let r = length(pos);
-        if (r < uniforms.rs) {
+        // Kerr horizon r+ = M + sqrt(M² - a²), M=0.5, a=χ·M. Equals Rs at χ=0.
+        let chi = uniforms.spin;
+        let m = 0.5;
+        let a = chi * m;
+        let r_plus = m + sqrt(max(m * m - a * a, 0.0));
+        if (r < r_plus) {
             // Captured: whatever we've composited so far is the result.
             break;
         }

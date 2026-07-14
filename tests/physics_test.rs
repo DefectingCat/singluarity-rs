@@ -52,3 +52,25 @@ fn kerr_horizon_is_monotonically_decreasing() {
     assert!(a > b, "0.3 > 0.6: {} vs {}", a, b);
     assert!(b > c, "0.6 > 0.9: {} vs {}", b, c);
 }
+
+#[test]
+fn kerr_bending_accel_degenerates_to_schwarzschild_at_zero_spin() {
+    // At χ=0 the Kerr bending accel must equal the Schwarzschild one.
+    let pos = bevy::math::Vec3::new(3.0, 1.0, 4.0);
+    let dir = bevy::math::Vec3::new(0.2, -0.1, -0.97).normalize();
+    let schw = physics::bending_accel(pos, dir);
+    let kerr = physics::kerr_bending_accel(pos, dir, 0.0);
+    let diff = (schw - kerr).length();
+    assert!(diff < 1e-6, "spin=0 Kerr should match Schwarzschild; diff = {}", diff);
+}
+
+#[test]
+fn kerr_bending_accel_nonzero_off_axis_at_nonzero_spin() {
+    // At χ>0 the drag term must produce a different accel (frame-dragging exists).
+    let pos = bevy::math::Vec3::new(3.0, 1.0, 4.0);
+    let dir = bevy::math::Vec3::new(0.2, -0.1, -0.97).normalize();
+    let schw = physics::bending_accel(pos, dir);
+    let kerr = physics::kerr_bending_accel(pos, dir, 0.8);
+    let diff = (schw - kerr).length();
+    assert!(diff > 1e-4, "spin=0.8 Kerr should differ from Schwarzschild; diff = {}", diff);
+}

@@ -72,6 +72,22 @@ pub fn kerr_horizon(chi: f32) -> f32 {
     m + (m * m - a * a).max(0.0).sqrt()
 }
 
+/// Kerr bending acceleration (CPU mirror of the shader `deriv` accel).
+/// `chi = a/M ∈ [0,1]`. At chi=0 this equals `bending_accel`.
+pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
+    let r = pos.length();
+    let m = 0.5;
+    let a = chi * m;
+    let h = pos.cross(dir);
+    let h2 = h.dot(h);
+    let r5 = (r * r * r * r * r).max(1e-6);
+    let radial = -1.5 * RS * h2 / r5 * pos;
+    let spin_axis = Vec3::Y;
+    let r3 = (r * r * r).max(1e-6);
+    let drag = 2.0 * m * a / r3 * spin_axis.cross(dir);
+    radial + drag
+}
+
 // Silence unused-import warning for Vec4 if not used; kept for future expansion.
 #[allow(dead_code)]
 fn _phantom(_v: Vec4) {}
