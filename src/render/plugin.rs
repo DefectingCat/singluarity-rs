@@ -33,6 +33,22 @@ pub struct UpscaleCamera;
 #[derive(Component)]
 struct UpscaleQuad;
 
+/// Marker for any camera that must be nudged each frame (Bevy 0.19 #24448
+/// workaround). All render cameras carry this.
+#[derive(Component)]
+pub struct Nudgable;
+
+/// Stores the fraction of the offscreen resolution that this quad's target
+/// fills. Used by resize_offscreen to rescale each quad independently.
+/// (1.0, 1.0) = full offscreen res; (0.5, 0.5) = half; etc.
+#[derive(Component)]
+pub struct QuadScaleFactor(pub f32, pub f32);
+
+/// Marks the composite quad (renders to the window, not an offscreen Image).
+/// resize_offscreen rescales it against the window, not the offscreen res.
+#[derive(Component)]
+pub struct CompositeQuad;
+
 pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
@@ -84,7 +100,7 @@ fn spawn_fullscreen_quad(
     let offscreen = images.add(Image::new_target_texture(
         w,
         h,
-        TextureFormat::Bgra8UnormSrgb,
+        TextureFormat::Rgba16Float,
         None,
     ));
     commands.spawn(OffscreenTarget(offscreen.clone()));
@@ -113,19 +129,21 @@ fn spawn_fullscreen_quad(
         MeshMaterial2d(materials.add(material)),
         Transform::default().with_scale(Vec3::new(half_w, half_h, 1.0)),
         FullscreenQuad,
+        QuadScaleFactor(1.0, 1.0),
         RenderLayers::layer(0),
     ));
-    // Offscreen camera: order -1 so it renders before the upscale camera.
+    // Offscreen camera: order -20 so it renders before the upscale camera.
     commands.spawn((
         Camera2d,
         Camera {
-            order: -1,
+            order: -20,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.1, 0.1, 0.1)),
             ..default()
         },
         RenderTarget::Image(offscreen.clone().into()),
         Msaa::Off,
         OffscreenCamera,
+        Nudgable,
         RenderLayers::layer(0),
     ));
 
@@ -137,9 +155,10 @@ fn spawn_fullscreen_quad(
         })),
         Transform::default().with_scale(Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0)),
         UpscaleQuad,
+        CompositeQuad,
         RenderLayers::layer(1),
     ));
-    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, RenderLayers::layer(1)));
+    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, Nudgable, RenderLayers::layer(1)));
 }
 
 /// Recreate the offscreen Image and rescale both quads on window resize,
@@ -155,8 +174,10 @@ fn resize_offscreen(
     // treat `With<T>` filters as disjoint access, so two such Query params would
     // trip B0001 — they must be grouped in a ParamSet (borrowed one at a time).
     mut quads: ParamSet<(
-        Query<&mut Transform, With<FullscreenQuad>>,
-        Query<&mut Transform, With<UpscaleQuad>>,
+        // p0: offscreen + bloom quads — rescaled against offscreen resolution.
+        Query<(&mut Transform, &QuadScaleFactor), Without<CompositeQuad>>,
+        // p1: composite quad — rescaled against window resolution.
+        Query<&mut Transform, With<CompositeQuad>>,
     )>,
 ) {
     if resized.read().next().is_none() {
@@ -167,15 +188,17 @@ fn resize_offscreen(
     let w = ((win.width() * scale) as u32).max(1);
     let h = ((win.height() * scale) as u32).max(1);
     if let Ok(handle) = target.single() {
-        let img = Image::new_target_texture(w, h, TextureFormat::Bgra8UnormSrgb, None);
+        let img = Image::new_target_texture(w, h, TextureFormat::Rgba16Float, None);
         // insert returns Result in 0.19 (Err if the asset is locked this frame).
         // Resize fires repeatedly while the user drags, so a dropped frame's
         // insert is harmless — it'll succeed on the next WindowResized.
         let _ = images.insert(handle.0.id(), img);
     }
-    for mut t in &mut quads.p0() {
-        t.scale = Vec3::new(w as f32 / 2.0, h as f32 / 2.0, 1.0);
+    // Rescale offscreen + bloom quads against the offscreen resolution.
+    for (mut t, f) in &mut quads.p0() {
+        t.scale = Vec3::new(w as f32 * f.0 / 2.0, h as f32 * f.1 / 2.0, 1.0);
     }
+    // Rescale the composite quad against the window resolution.
     for mut t in &mut quads.p1() {
         t.scale = Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0);
     }
@@ -192,7 +215,7 @@ fn resize_offscreen(
 #[allow(clippy::type_complexity)]
 fn nudge_camera(
     time: Res<Time>,
-    mut camera: Query<&mut Transform, Or<(With<OffscreenCamera>, With<UpscaleCamera>)>>,
+    mut camera: Query<&mut Transform, With<Nudgable>>,
 ) {
     let nudge = (time.elapsed_secs() * 5.0).sin() * 1e-3;
     for mut t in &mut camera {
