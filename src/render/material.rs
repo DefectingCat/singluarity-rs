@@ -138,4 +138,20 @@ impl Material2d for UpscaleMaterial {
     }
 }
 
+/// Extracts luminance above a threshold from the HDR offscreen into a
+/// half-res float texture (bloom stage [2]). Soft-knee, not hard cut.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct BrightPassMaterial {
+    #[uniform(0)]
+    pub threshold: f32,
+    #[texture(1)]
+    #[sampler(2)]
+    pub source: Handle<Image>,
+}
+
+impl Material2d for BrightPassMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/brightpass.wgsl".into()
+    }
+}
 

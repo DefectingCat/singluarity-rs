@@ -49,6 +49,22 @@ pub struct QuadScaleFactor(pub f32, pub f32);
 #[derive(Component)]
 pub struct CompositeQuad;
 
+/// The half-res Image the bright-pass writes into (bloom stage [2]).
+#[derive(Component)]
+pub struct BloomTarget0(pub Handle<Image>);
+
+/// Camera + quad markers for the bright-pass (for rebuild queries).
+#[derive(Component)]
+pub struct BrightPassCamera;
+#[derive(Component)]
+pub struct BrightPassQuad;
+
+/// Camera + quad markers for the blur passes (for rebuild queries).
+#[derive(Component)]
+pub struct BlurCamera;
+#[derive(Component)]
+pub struct BlurQuad;
+
 pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
@@ -58,6 +74,7 @@ impl Plugin for BlackHolePlugin {
             .init_resource::<crate::params::BlackHoleParams>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::UpscaleMaterial>::default())
+            .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_default_planet)
@@ -83,6 +100,7 @@ fn spawn_fullscreen_quad(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
     mut upscale_materials: ResMut<Assets<crate::render::material::UpscaleMaterial>>,
+    mut bp_materials: ResMut<Assets<crate::render::material::BrightPassMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window>,
@@ -145,6 +163,38 @@ fn spawn_fullscreen_quad(
         OffscreenCamera,
         Nudgable,
         RenderLayers::layer(0),
+    ));
+
+    // --- Bright-pass (bloom stage [2]): half-res float target ---
+    let bw = ((w as f32 * 0.5) as u32).max(1);
+    let bh = ((h as f32 * 0.5) as u32).max(1);
+    let bloom0 = images.add(Image::new_target_texture(
+        bw, bh, TextureFormat::Rgba16Float, None,
+    ));
+    commands.spawn(BloomTarget0(bloom0.clone()));
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(bp_materials.add(crate::render::material::BrightPassMaterial {
+            threshold: 1.0,
+            source: offscreen.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(bw as f32 / 2.0, bh as f32 / 2.0, 1.0)),
+        BrightPassQuad,
+        QuadScaleFactor(0.5, 0.5),
+        RenderLayers::layer(2),
+    ));
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: -19,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
+            ..default()
+        },
+        RenderTarget::Image(bloom0.clone().into()),
+        Msaa::Off,
+        BrightPassCamera,
+        Nudgable,
+        RenderLayers::layer(2),
     ));
 
     // --- Upscale quad (draws offscreen Image to the window) ---
