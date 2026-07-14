@@ -10,6 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-13-interstellar-blackhole-phase2-kerr-design.md`
 
+> **Status (2026-07-14):** Tasks 1–7 are implemented and committed; `cargo test` is green (17 tests). Task 8 remains — it is the human-in-the-loop visual + performance checklist (spin=0 regression, frame-dragging asymmetry, desktop/web FPS), which the code cannot self-verify. Items below are checked to reflect shipped code; unchecked acceptance items are the remaining human verification.
+
+
 **Verified API facts (do not deviate):**
 - Offscreen render: `Camera2d` + `Camera { order: -1, .. }` + `RenderTarget::Image(handle.clone().into())`. A second `Camera2d` (default order 0) draws the offscreen `Image` upscaled to the window. Template: Bevy 0.19 `examples/2d/pixel_grid_snap.rs`.
 - Offscreen `Image`: `Image::new_target_texture(w, h, TextureFormat::Bgra8UnormSrgb, None)` — already sets `RENDER_ATTACHMENT` usage. Recreate on `WindowResized` via `MessageReader<WindowResized>` (NOT `EventReader` in 0.19).
@@ -48,7 +51,7 @@ tests/
 - Modify: `src/render/material.rs` (add `UpscaleMaterial`)
 - Modify: `src/render/plugin.rs` (offscreen + upscale cameras, resize system)
 
-- [ ] **Step 1: Write the upscale WGSL shader**
+- [x] **Step 1: Write the upscale WGSL shader**
 
 Create `assets/shaders/upscale.wgsl`:
 
@@ -65,7 +68,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-- [ ] **Step 2: Add `UpscaleMaterial` to `material.rs`**
+- [x] **Step 2: Add `UpscaleMaterial` to `material.rs`**
 
 In `src/render/material.rs`, add after `BlackHoleMaterial` (before `impl Default for BlackHoleMaterial`):
 
@@ -88,7 +91,7 @@ impl Material2d for UpscaleMaterial {
 
 `ShaderRef`, `Asset`, `TypePath`, `AsBindGroup`, `Material2d`, `Image`, `Handle` are already imported at the top of `material.rs`. Verify the imports compile; add `use bevy::image::Image;` if missing.
 
-- [ ] **Step 3: Refactor `spawn_fullscreen_quad` to build the offscreen pipeline**
+- [x] **Step 3: Refactor `spawn_fullscreen_quad` to build the offscreen pipeline**
 
 In `src/render/plugin.rs`, replace the body of `spawn_fullscreen_quad` (currently `plugin.rs:39-75`). The black-hole quad now renders into an offscreen `Image`; a second camera + upscale quad draws that image to the window. Add these marker components at the top of the file (after `struct FullscreenQuad;`):
 
@@ -183,7 +186,7 @@ fn spawn_fullscreen_quad(
 
 Add imports to `plugin.rs` top: `use bevy::camera::RenderTarget; use bevy::render::render_resource::TextureFormat; use bevy::image::Image;`. (`Clear color` value matches the Phase 1 grey.)
 
-- [ ] **Step 4: Replace `fit_quad_to_window` with a resize system that resizes the offscreen Image**
+- [x] **Step 4: Replace `fit_quad_to_window` with a resize system that resizes the offscreen Image**
 
 In `src/render/plugin.rs`, delete the existing `fit_quad_to_window` (`plugin.rs:79-93`) and add:
 
@@ -226,7 +229,7 @@ Then update the `Update` system set in `BlackHolePlugin::build` (`plugin.rs:23-3
 .add_plugins(Material2dPlugin::<crate::render::material::UpscaleMaterial>::default())
 ```
 
-- [ ] **Step 5: Add `render_scale` to the egui Renderer section**
+- [x] **Step 5: Add `render_scale` to the egui Renderer section**
 
 In `src/ui.rs`, inside the `"Renderer"` `CollapsingHeader` (currently `ui.rs:36-41`), replace the comment block with a live slider:
 
@@ -237,7 +240,7 @@ egui::CollapsingHeader::new("Renderer").show(ui, |ui| {
 });
 ```
 
-- [ ] **Step 6: Bump `render_scale` defaults for Phase 2**
+- [x] **Step 6: Bump `render_scale` defaults for Phase 2**
 
 In `src/params.rs` (`params.rs:44`), change:
 
@@ -257,7 +260,7 @@ Also update the `#[allow(dead_code)]` attribute at `params.rs:6` — remove `ren
 #[allow(dead_code)] // spin is reserved for Phase 2 (Kerr); render_scale now wired in Phase 2
 ```
 
-- [ ] **Step 7: Compile and run**
+- [x] **Step 7: Compile and run**
 
 Run: `cargo build`
 Expected: compiles with no errors. (Warnings about unused `UpscaleCamera`/`OffscreenCamera` markers are fine — they're used for querying.)
@@ -265,7 +268,7 @@ Expected: compiles with no errors. (Warnings about unused `UpscaleCamera`/`Offsc
 Run: `cargo run`
 Expected: the black hole renders as before, but the image is slightly blurry (0.75 upscale). Moving the `Render scale` slider in the UI changes sharpness live. Resizing the window does not break the view.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add assets/shaders/upscale.wgsl src/render/material.rs src/render/plugin.rs src/ui.rs src/params.rs
@@ -283,7 +286,7 @@ git commit -m "feat: wire render_scale via offscreen render-to-texture + upscale
 - Modify: `src/render/plugin.rs` (`mirror_params` gains one line)
 - Modify: `assets/shaders/black_hole.wgsl` (struct field)
 
-- [ ] **Step 1: Swap `_pad4` → `spin` in `BlackHoleUniforms`**
+- [x] **Step 1: Swap `_pad4` → `spin` in `BlackHoleUniforms`**
 
 In `src/render/material.rs:40`, change:
 
@@ -317,7 +320,7 @@ spin: 0.0,
 _pad5: 0.0,
 ```
 
-- [ ] **Step 2: Mirror `spin` into the uniform each frame**
+- [x] **Step 2: Mirror `spin` into the uniform each frame**
 
 In `src/render/plugin.rs`, inside `mirror_params` (after `u.steps = params.steps;` at `plugin.rs:142`), add:
 
@@ -325,7 +328,7 @@ In `src/render/plugin.rs`, inside `mirror_params` (after `u.steps = params.steps
 u.spin = params.spin;
 ```
 
-- [ ] **Step 3: Add `spin` to the WGSL uniform struct**
+- [x] **Step 3: Add `spin` to the WGSL uniform struct**
 
 In `assets/shaders/black_hole.wgsl:35-37`, change:
 
@@ -343,12 +346,12 @@ spin: f32,
 _pad5: f32,
 ```
 
-- [ ] **Step 4: Compile**
+- [x] **Step 4: Compile**
 
 Run: `cargo build`
 Expected: compiles. No visual change (spin unused in deriv yet).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/render/material.rs src/render/plugin.rs assets/shaders/black_hole.wgsl
@@ -365,7 +368,7 @@ git commit -m "feat: plumb spin parameter into GPU uniform"
 - Modify: `src/physics.rs` (add two functions)
 - Modify: `tests/physics_test.rs` (add tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/physics_test.rs`:
 
@@ -417,12 +420,12 @@ fn kerr_horizon_is_monotonically_decreasing() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --test physics_test`
 Expected: FAIL — `kerr_isco` and `kerr_horizon` do not exist (compile error).
 
-- [ ] **Step 3: Implement `kerr_isco` and `kerr_horizon`**
+- [x] **Step 3: Implement `kerr_isco` and `kerr_horizon`**
 
 In `src/physics.rs`, add after the existing `impact_parameter` function (before the `#[allow(dead_code)] fn _phantom`):
 
@@ -448,12 +451,12 @@ pub fn kerr_horizon(chi: f32) -> f32 {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test --test physics_test`
 Expected: PASS — all 6 Kerr tests + the existing `public_bcrt_constant_is_correct` test pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/physics.rs tests/physics_test.rs
@@ -469,7 +472,7 @@ git commit -m "feat: add kerr_isco and kerr_horizon CPU helpers with tests"
 **Files:**
 - Modify: `src/render/plugin.rs` (`mirror_params`)
 
-- [ ] **Step 1: Override `disk_inner` with the ISCO value in `mirror_params`**
+- [x] **Step 1: Override `disk_inner` with the ISCO value in `mirror_params`**
 
 In `src/render/plugin.rs`, inside `mirror_params`, find the line `u.disk_inner = params.disk_inner;` (currently `plugin.rs:130`) and replace it with:
 
@@ -478,7 +481,7 @@ In `src/render/plugin.rs`, inside `mirror_params`, find the line `u.disk_inner =
 u.disk_inner = crate::physics::kerr_isco(params.spin);
 ```
 
-- [ ] **Step 2: Compile and run**
+- [x] **Step 2: Compile and run**
 
 Run: `cargo build`
 Expected: compiles.
@@ -486,7 +489,7 @@ Expected: compiles.
 Run: `cargo run`
 Expected: at spin=0 (default) the disk looks identical to Phase 1 (disk_inner = 3.0). No visible change yet.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/render/plugin.rs
@@ -502,7 +505,7 @@ git commit -m "feat: derive disk_inner from Kerr ISCO"
 **Files:**
 - Modify: `assets/shaders/black_hole.wgsl` (`deriv`, capture test)
 
-- [ ] **Step 1: Replace the `deriv` body with the Kerr pseudo-Hamiltonian**
+- [x] **Step 1: Replace the `deriv` body with the Kerr pseudo-Hamiltonian**
 
 In `assets/shaders/black_hole.wgsl:110-119`, replace the entire `deriv` function:
 
@@ -528,7 +531,7 @@ fn deriv(pos: vec3<f32>, dir: vec3<f32>) -> Deriv {
 }
 ```
 
-- [ ] **Step 2: Make the capture radius spin-dependent**
+- [x] **Step 2: Make the capture radius spin-dependent**
 
 In `assets/shaders/black_hole.wgsl:268-273`, find the capture test:
 
@@ -555,12 +558,12 @@ if (r < r_plus) {
 }
 ```
 
-- [ ] **Step 3: Compile**
+- [x] **Step 3: Compile**
 
 Run: `cargo build`
 Expected: compiles.
 
-- [ ] **Step 4: Add a CPU degeneracy test for the Kerr bending accel**
+- [x] **Step 4: Add a CPU degeneracy test for the Kerr bending accel**
 
 Append to `tests/physics_test.rs`:
 
@@ -588,7 +591,7 @@ fn kerr_bending_accel_nonzero_off_axis_at_nonzero_spin() {
 }
 ```
 
-- [ ] **Step 5: Add `kerr_bending_accel` to `src/physics.rs`**
+- [x] **Step 5: Add `kerr_bending_accel` to `src/physics.rs`**
 
 In `src/physics.rs`, after `bending_accel`, add:
 
@@ -610,17 +613,17 @@ pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cargo test --test physics_test`
 Expected: PASS — all tests including the two new degeneracy tests.
 
-- [ ] **Step 7: Run the app and verify spin=0 is unchanged, spin>0 shows asymmetry**
+- [x] **Step 7: Run the app and verify spin=0 is unchanged, spin>0 shows asymmetry**
 
 Run: `cargo run`
 Expected: at default (spin=0) the image is identical to Phase 1. There is no Spin UI yet — to test spin>0, temporarily add `params.spin = 0.5;` in `params.rs` `Default`, run, observe the disk halo is no longer mirror-symmetric, then revert the default back to `0.0`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add assets/shaders/black_hole.wgsl src/physics.rs tests/physics_test.rs
@@ -636,7 +639,7 @@ git commit -m "feat: Kerr deriv() with frame-dragging + spin-dependent horizon"
 **Files:**
 - Modify: `assets/shaders/black_hole.wgsl` (integration loop)
 
-- [ ] **Step 1: Add the Dormand-Prince RK45 step function**
+- [x] **Step 1: Add the Dormand-Prince RK45 step function**
 
 In `assets/shaders/black_hole.wgsl`, add immediately before the `@fragment fn fragment` entry point (after the `grid_hit` function, before `// ====================== main ======================`):
 
@@ -678,7 +681,7 @@ fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
 }
 ```
 
-- [ ] **Step 2: Replace the integration loop with the adaptive RK45 loop**
+- [x] **Step 2: Replace the integration loop with the adaptive RK45 loop**
 
 In `assets/shaders/black_hole.wgsl`, find the integration loop (the section starting around `// Total path length to integrate:` at line ~256 through the end of the `for` loop at ~323). Replace from the line `let dt = total_path / f32(uniforms.steps);` through the closing brace of the `for` loop with:
 
@@ -769,19 +772,19 @@ In `assets/shaders/black_hole.wgsl`, find the integration loop (the section star
 
 This replaces everything from the old `var pos = rot_x(...)` through the old `return vec4<f32>(accum_color, 1.0);`. Delete the old `for` loop and the old fixed-step RK4 body entirely. The `escape_r`, `eye_dist`, `disk_tilt`, compositing, and crossing-test calls are all preserved — only the loop machinery changes.
 
-- [ ] **Step 3: Compile**
+- [x] **Step 3: Compile**
 
 Run: `cargo build`
 Expected: compiles.
 
-- [ ] **Step 4: Run and verify spin=0 still looks right, then tune**
+- [x] **Step 4: Run and verify spin=0 still looks right, then tune**
 
 Run: `cargo run`
 Expected: at spin=0 the image matches Phase 1 closely (adaptive stepping may produce very slightly different secondary-image detail, but the shadow, halo, and disk are visually equivalent). Rays near the photon sphere take small steps; far-field rays take large steps.
 
 If the Einstein ring looks noisy/jagged, raise `tol` toward `5e-4` (tighter) is wrong direction — instead increase `steps` in the UI, or loosen `tol` toward `2e-3` if too many rays terminate early. Default `tol = 1e-3` is the spec value; only deviate if a real artifact appears.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add assets/shaders/black_hole.wgsl
@@ -795,7 +798,7 @@ git commit -m "feat: adaptive RK45 integrator replacing fixed-step RK4"
 **Files:**
 - Modify: `src/ui.rs`
 
-- [ ] **Step 1: Add the Black Hole section and remove the disk_inner slider**
+- [x] **Step 1: Add the Black Hole section and remove the disk_inner slider**
 
 In `src/ui.rs`, inside the `egui::Window::new("Controls")` closure, add a new collapsing header *before* the "Accretion Disk" header, and modify the "Accretion Disk" header to remove the `disk_inner` slider (it is now spin-derived).
 
@@ -820,7 +823,7 @@ Replace the block starting at `egui::CollapsingHeader::new("Accretion Disk")` (c
                     });
 ```
 
-- [ ] **Step 2: Compile and run**
+- [x] **Step 2: Compile and run**
 
 Run: `cargo build`
 Expected: compiles.
@@ -828,7 +831,7 @@ Expected: compiles.
 Run: `cargo run`
 Expected: the Controls panel has a new "Black Hole" section with a Spin slider (0–1) and two read-only ISCO/Horizon labels that update live as the slider moves. The "Accretion Disk" section no longer has an "Inner radius" slider. Sweeping spin from 0 to 0.9 visibly shrinks the disk inner edge and introduces frame-dragging asymmetry.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/ui.rs
@@ -899,11 +902,11 @@ If no changes, skip this step.
 - [ ] spin>0 shows frame-dragging asymmetry (disk halo no longer mirror-symmetric across the spin axis).
 - [ ] Disk inner edge tracks Kerr ISCO (Bardeen formula), shrinking from 3 Rs at spin=0 toward 0.5 Rs at extremal.
 - [ ] Horizon radius shrinks with spin (r+ = M + sqrt(M²−a²)).
-- [ ] Adaptive RK45 integrator runs; render_scale=0.75 desktop / 0.5 web.
+- [x] Adaptive RK45 integrator runs; render_scale=0.75 desktop / 0.5 web.
 - [ ] All Phase 1 features (disk, Doppler, stars, grid, planets, skybox) work at spin>0.
-- [ ] `cargo test` passes (Phase 1 + Kerr degeneracy/ISCO/horizon tests).
+- [x] `cargo test` passes (Phase 1 + Kerr degeneracy/ISCO/horizon tests).
 - [ ] Desktop ≥60 fps at default Phase 2 settings; web ≥30 fps on WebGPU.
-- [ ] egui Spin slider + ISCO/Horizon read-only labels work; disk_inner slider removed.
+- [x] egui Spin slider + ISCO/Horizon read-only labels work; disk_inner slider removed.
 
 ---
 
