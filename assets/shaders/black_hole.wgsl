@@ -154,21 +154,21 @@ fn value_noise3(p: vec3<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    let n000 = dot(hash33(i + vec3<f32>(0.0, 0.0, 0.0)) - 0.5, vec3<f32>(1.0));
-    let n100 = dot(hash33(i + vec3<f32>(1.0, 0.0, 0.0)) - 0.5, vec3<f32>(1.0));
-    let n010 = dot(hash33(i + vec3<f32>(0.0, 1.0, 0.0)) - 0.5, vec3<f32>(1.0));
-    let n110 = dot(hash33(i + vec3<f32>(1.0, 1.0, 0.0)) - 0.5, vec3<f32>(1.0));
-    let n001 = dot(hash33(i + vec3<f32>(0.0, 0.0, 1.0)) - 0.5, vec3<f32>(1.0));
-    let n101 = dot(hash33(i + vec3<f32>(1.0, 0.0, 1.0)) - 0.5, vec3<f32>(1.0));
-    let n011 = dot(hash33(i + vec3<f32>(0.0, 1.0, 1.0)) - 0.5, vec3<f32>(1.0));
-    let n111 = dot(hash33(i + vec3<f32>(1.0, 1.0, 1.0)) - 0.5, vec3<f32>(1.0));
+    let n000 = hash33(i + vec3<f32>(0.0, 0.0, 0.0)).x;
+    let n100 = hash33(i + vec3<f32>(1.0, 0.0, 0.0)).x;
+    let n010 = hash33(i + vec3<f32>(0.0, 1.0, 0.0)).x;
+    let n110 = hash33(i + vec3<f32>(1.0, 1.0, 0.0)).x;
+    let n001 = hash33(i + vec3<f32>(0.0, 0.0, 1.0)).x;
+    let n101 = hash33(i + vec3<f32>(1.0, 0.0, 1.0)).x;
+    let n011 = hash33(i + vec3<f32>(0.0, 1.0, 1.0)).x;
+    let n111 = hash33(i + vec3<f32>(1.0, 1.0, 1.0)).x;
     let nx00 = mix(n000, n100, u.x);
     let nx10 = mix(n010, n110, u.x);
     let nx01 = mix(n001, n101, u.x);
     let nx11 = mix(n011, n111, u.x);
     let nxy0 = mix(nx00, nx10, u.y);
     let nxy1 = mix(nx01, nx11, u.y);
-    return mix(nxy0, nxy1, u.z) + 0.5;
+    return mix(nxy0, nxy1, u.z);
 }
 
 fn fbm3(p: vec3<f32>, octaves: u32) -> f32 {
@@ -197,7 +197,7 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     // Domain-warped FBM for feathered/smoky gas texture. The Keplerian shear
     // (rot ∝ 1/r^1.5) is folded into the noise flow term so inner radii flow
     // faster than outer — correct differential rotation.
-    let noise = disk_noise(vec3<f32>(r * 0.5, phi * 0.3, rot), uniforms.time);
+    let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
     let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
     let tcol = mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
