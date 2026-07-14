@@ -213,7 +213,8 @@ fn mirror_params(
         u.resolution = Vec2::new(win.width(), win.height());
         u.time = time.elapsed_secs();
         u.rs = params.rs;
-        u.disk_inner = params.disk_inner;
+        // disk_inner is spin-derived (Kerr ISCO); the params.disk_inner field is ignored.
+        u.disk_inner = crate::physics::kerr_isco(params.spin);
         u.disk_outer = params.disk_outer;
         u.disk_tilt = params.disk_tilt;
         u.disk_brightness = params.disk_brightness;

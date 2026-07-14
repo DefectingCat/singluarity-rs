@@ -8,6 +8,7 @@ mod camera;
 mod params;
 mod ui;
 mod scene;
+mod physics;
 
 fn main() {
     // On web, abort startup if WebGPU isn't available and show a message.
