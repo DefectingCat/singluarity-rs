@@ -16,7 +16,7 @@ pub fn ui_system(
                     .default_open(true)
                     .show(ui, |ui| {
                         ui.add(egui::Slider::new(&mut camera.distance, 3.0..=200.0).text("Distance"));
-                        ui.add(egui::Slider::new(&mut camera.yaw, -3.14..=3.14).text("Yaw"));
+                        ui.add(egui::Slider::new(&mut camera.yaw, -std::f32::consts::PI..=std::f32::consts::PI).text("Yaw"));
                         ui.add(egui::Slider::new(&mut camera.pitch, 0.05..=3.09).text("Pitch"));
                         ui.add(egui::Slider::new(&mut camera.fov, 0.3..=2.0).text("FOV"));
                     });
@@ -32,7 +32,7 @@ pub fn ui_system(
                     .show(ui, |ui| {
                         // disk_inner removed — now spin-derived (see Black Hole section).
                         ui.add(egui::Slider::new(&mut params.disk_outer, 6.0..=40.0).text("Outer radius"));
-                        ui.add(egui::Slider::new(&mut params.disk_tilt, 0.0..=3.14).text("Tilt"));
+                        ui.add(egui::Slider::new(&mut params.disk_tilt, 0.0..=std::f32::consts::PI).text("Tilt"));
                         ui.add(egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).text("Brightness"));
                         ui.add(egui::Slider::new(&mut params.disk_rotation_speed, 0.0..=3.0).text("Rotation speed"));
                     });
