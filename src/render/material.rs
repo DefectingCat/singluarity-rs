@@ -58,7 +58,7 @@ impl Default for BlackHoleUniforms {
             rs: 1.0,
             disk_inner: 3.0,
             disk_outer: 15.0,
-            disk_tilt: 1.318,
+            disk_tilt: 0.45,
             disk_brightness: 1.0,
             disk_rotation_speed: 0.5,
             doppler_strength: 1.0,

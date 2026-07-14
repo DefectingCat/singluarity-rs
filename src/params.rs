@@ -35,7 +35,7 @@ impl Default for BlackHoleParams {
             rs: 1.0,
             disk_inner: 3.0,
             disk_outer: 15.0,
-            disk_tilt: 1.318,      // ~75.5 deg, matching the reference video
+            disk_tilt: 0.45,       // ~25.8 deg
             disk_brightness: 1.0,
             disk_rotation_speed: 0.5,
             doppler_enabled: true,
