@@ -140,14 +140,64 @@ fn disk_hit(prev: vec3<f32>, cur: vec3<f32>) -> bool {
     return r >= uniforms.disk_inner && r <= uniforms.disk_outer;
 }
 
+// --- disk noise (domain-warped FBM) ---
+fn hash33(p: vec3<f32>) -> vec3<f32> {
+    let q = vec3<f32>(
+        dot(p, vec3<f32>(127.1, 311.7, 74.7)),
+        dot(p, vec3<f32>(269.5, 183.3, 246.1)),
+        dot(p, vec3<f32>(113.5, 271.9, 124.6)),
+    );
+    return fract(sin(q) * 43758.5453);
+}
+
+fn value_noise3(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let n000 = dot(hash33(i + vec3<f32>(0.0, 0.0, 0.0)) - 0.5, vec3<f32>(1.0));
+    let n100 = dot(hash33(i + vec3<f32>(1.0, 0.0, 0.0)) - 0.5, vec3<f32>(1.0));
+    let n010 = dot(hash33(i + vec3<f32>(0.0, 1.0, 0.0)) - 0.5, vec3<f32>(1.0));
+    let n110 = dot(hash33(i + vec3<f32>(1.0, 1.0, 0.0)) - 0.5, vec3<f32>(1.0));
+    let n001 = dot(hash33(i + vec3<f32>(0.0, 0.0, 1.0)) - 0.5, vec3<f32>(1.0));
+    let n101 = dot(hash33(i + vec3<f32>(1.0, 0.0, 1.0)) - 0.5, vec3<f32>(1.0));
+    let n011 = dot(hash33(i + vec3<f32>(0.0, 1.0, 1.0)) - 0.5, vec3<f32>(1.0));
+    let n111 = dot(hash33(i + vec3<f32>(1.0, 1.0, 1.0)) - 0.5, vec3<f32>(1.0));
+    let nx00 = mix(n000, n100, u.x);
+    let nx10 = mix(n010, n110, u.x);
+    let nx01 = mix(n001, n101, u.x);
+    let nx11 = mix(n011, n111, u.x);
+    let nxy0 = mix(nx00, nx10, u.y);
+    let nxy1 = mix(nx01, nx11, u.y);
+    return mix(nxy0, nxy1, u.z) + 0.5;
+}
+
+fn fbm3(p: vec3<f32>, octaves: u32) -> f32 {
+    var sum = 0.0;
+    var amp = 0.5;
+    var freq = 1.0;
+    for (var i: u32 = 0u; i < octaves; i = i + 1u) {
+        sum = sum + amp * value_noise3(p * freq);
+        freq = freq * 2.0;
+        amp = amp * 0.5;
+    }
+    return sum;
+}
+
+fn disk_noise(pos: vec3<f32>, t: f32) -> f32 {
+    let warp = fbm3(pos * 0.8 + vec3<f32>(0.0, 0.0, t * 0.1), 3u);
+    let n = fbm3(pos * 2.0 + warp * 1.5 + vec3<f32>(0.0, 0.0, t * 0.3), 4u);
+    return n;
+}
+
 fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let r = length(vec2<f32>(pos.x, pos.z));
     let phi = atan2(pos.z, pos.x);
 
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
-    let n = sin(phi * 8.0 + rot) * 0.5 + 0.5;
-    let n2 = sin(phi * 23.0 - rot * 1.7 + r * 2.0) * 0.5 + 0.5;
-    let noise = mix(n, n2, 0.4);
+    // Domain-warped FBM for feathered/smoky gas texture. The Keplerian shear
+    // (rot ∝ 1/r^1.5) is folded into the noise flow term so inner radii flow
+    // faster than outer — correct differential rotation.
+    let noise = disk_noise(vec3<f32>(r * 0.5, phi * 0.3, rot), uniforms.time);
 
     let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
     let tcol = mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
