@@ -145,10 +145,15 @@ fn resize_offscreen(
     mut images: ResMut<Assets<Image>>,
     params: Res<crate::params::BlackHoleParams>,
     target: Query<&OffscreenTarget>,
-    mut bh_quad: Query<&mut Transform, With<FullscreenQuad>>,
-    mut up_quad: Query<&mut Transform, With<UpscaleQuad>>,
     window: Query<&Window>,
     mut resized: MessageReader<bevy::window::WindowResized>,
+    // Both queries borrow `&mut Transform`. Bevy's conflict checker does not
+    // treat `With<T>` filters as disjoint access, so two such Query params would
+    // trip B0001 — they must be grouped in a ParamSet (borrowed one at a time).
+    mut quads: ParamSet<(
+        Query<&mut Transform, With<FullscreenQuad>>,
+        Query<&mut Transform, With<UpscaleQuad>>,
+    )>,
 ) {
     if resized.read().next().is_none() {
         return;
@@ -164,10 +169,10 @@ fn resize_offscreen(
         // insert is harmless — it'll succeed on the next WindowResized.
         let _ = images.insert(handle.0.id(), img);
     }
-    for mut t in &mut bh_quad {
+    for mut t in &mut quads.p0() {
         t.scale = Vec3::new(w as f32 / 2.0, h as f32 / 2.0, 1.0);
     }
-    for mut t in &mut up_quad {
+    for mut t in &mut quads.p1() {
         t.scale = Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0);
     }
 }
