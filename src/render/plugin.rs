@@ -61,6 +61,7 @@ impl Plugin for BlackHolePlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_fullscreen_quad(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -103,8 +104,10 @@ fn spawn_fullscreen_quad(
         super::material::SphereData::default();
         super::material::MAX_PLANETS
     ]));
-    let mut material = BlackHoleMaterial::default();
-    material.planets = planets_buffer;
+    let material = BlackHoleMaterial {
+        planets: planets_buffer,
+        ..Default::default()
+    };
     commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(materials.add(material)),
@@ -141,6 +144,7 @@ fn spawn_fullscreen_quad(
 
 /// Recreate the offscreen Image and rescale both quads on window resize,
 /// honoring the live `render_scale` param.
+#[allow(clippy::type_complexity)]
 fn resize_offscreen(
     mut images: ResMut<Assets<Image>>,
     params: Res<crate::params::BlackHoleParams>,
@@ -185,6 +189,7 @@ fn resize_offscreen(
 /// entity — its freeze would make the upscale camera re-sample a stale
 /// texture every frame → frozen view) and the upscale camera (the one
 /// rendering to the window). Remove when the upstream regression is fixed.
+#[allow(clippy::type_complexity)]
 fn nudge_camera(
     time: Res<Time>,
     mut camera: Query<&mut Transform, Or<(With<OffscreenCamera>, With<UpscaleCamera>)>>,
