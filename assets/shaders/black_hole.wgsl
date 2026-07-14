@@ -323,14 +323,23 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let step = rk45_step(pos, d, dt);
         let err = step.err;
 
-        if (err > tol * 10.0) {
+        if (err > tol * 10.0 && dt > dt_min) {
             // Reject: shrink dt, retry (does not consume budget).
-            dt = clamp(dt * 0.2, dt_min, dt_max);
+            // The `dt > dt_min` guard makes dt_min a forced-accept floor: once
+            // dt is already at its minimum, accept the step regardless of error
+            // rather than spinning forever on `continue`. This prevents a GPU
+            // hang when a ray hits a region whose error is intrinsically above
+            // tolerance even at the smallest step (extreme spin, near-horizon).
+            dt = dt_min;
             continue;
         }
         // Accept: consume one budget unit, refine dt.
         budget = budget - 1u;
-        dt = clamp(dt * pow(tol / max(err, 1e-12), 0.2), dt_min, dt_max);
+        if (err > tol * 10.0) {
+            // Forced accept at dt_min (err still high): don't grow dt back up.
+        } else {
+            dt = clamp(dt * pow(tol / max(err, 1e-12), 0.2), dt_min, dt_max);
+        }
 
         let new_pos = step.pos;
         let new_dir = step.dir;
