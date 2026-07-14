@@ -123,21 +123,6 @@ impl Material2d for BlackHoleMaterial {
     }
 }
 
-/// Samples the sub-resolution offscreen render and blits it fullscreen.
-/// Bound to a second Camera2d that draws after the offscreen camera.
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct UpscaleMaterial {
-    #[texture(0)]
-    #[sampler(1)]
-    pub source: Handle<Image>,
-}
-
-impl Material2d for UpscaleMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/upscale.wgsl".into()
-    }
-}
-
 /// Extracts luminance above a threshold from the HDR offscreen into a
 /// half-res float texture (bloom stage [2]). Soft-knee, not hard cut.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
@@ -181,3 +166,31 @@ impl Material2d for BlurMaterial {
     }
 }
 
+/// Uniform for the composite pass (bloom stage [5]).
+#[derive(Clone, ShaderType)]
+pub struct CompositeUniform {
+    pub bloom_strength: f32,
+    pub exposure: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+}
+
+/// Final stage: tone-maps the HDR scene + bloom to LDR for the window.
+/// Replaces UpscaleMaterial. ACES (Narkowicz) tone mapping.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct CompositeMaterial {
+    #[uniform(0)]
+    pub uniform: CompositeUniform,
+    #[texture(1)]
+    #[sampler(2)]
+    pub scene: Handle<Image>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub bloom: Handle<Image>,
+}
+
+impl Material2d for CompositeMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/composite.wgsl".into()
+    }
+}

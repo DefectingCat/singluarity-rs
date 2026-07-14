@@ -83,7 +83,7 @@ impl Plugin for BlackHolePlugin {
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
-            .add_plugins(Material2dPlugin::<crate::render::material::UpscaleMaterial>::default())
+            .add_plugins(Material2dPlugin::<crate::render::material::CompositeMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
@@ -110,7 +110,7 @@ fn spawn_fullscreen_quad(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
-    mut upscale_materials: ResMut<Assets<crate::render::material::UpscaleMaterial>>,
+    mut composite_materials: ResMut<Assets<crate::render::material::CompositeMaterial>>,
     mut bp_materials: ResMut<Assets<crate::render::material::BrightPassMaterial>>,
     mut blur_materials: ResMut<Assets<crate::render::material::BlurMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
@@ -307,12 +307,18 @@ fn spawn_fullscreen_quad(
         RenderTarget::Image(bloom_final.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(6),
     ));
 
-    // --- Upscale quad (draws offscreen Image to the window) ---
+    // --- Composite quad (draws HDR scene + bloom to the window, ACES tone-mapped) ---
+    // bloom_final comes from the blur pyramid (Task 5).
+    let composite_mat = composite_materials.add(crate::render::material::CompositeMaterial {
+        uniform: crate::render::material::CompositeUniform {
+            bloom_strength: 0.8, exposure: 1.0, _pad0: 0.0, _pad1: 0.0,
+        },
+        scene: offscreen.clone(),
+        bloom: bloom_final.clone(),
+    });
     commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(upscale_materials.add(crate::render::material::UpscaleMaterial {
-            source: offscreen.clone(),
-        })),
+        MeshMaterial2d(composite_mat),
         Transform::default().with_scale(Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0)),
         UpscaleQuad,
         CompositeQuad,
@@ -328,6 +334,10 @@ fn resize_offscreen(
     mut images: ResMut<Assets<Image>>,
     params: Res<crate::params::BlackHoleParams>,
     target: Query<&OffscreenTarget>,
+    bloom0: Query<&BloomTarget0>,
+    bloom1: Query<&BloomTarget1>,
+    bloom2: Query<&BloomTarget2>,
+    bloom_final: Query<&BloomFinalTarget>,
     window: Query<&Window>,
     mut resized: MessageReader<bevy::window::WindowResized>,
     // Both queries borrow `&mut Transform`. Bevy's conflict checker does not
@@ -353,6 +363,25 @@ fn resize_offscreen(
         // Resize fires repeatedly while the user drags, so a dropped frame's
         // insert is harmless — it'll succeed on the next WindowResized.
         let _ = images.insert(handle.0.id(), img);
+    }
+    // Bloom pyramid (queries return empty when bloom is off).
+    let bw = ((w as f32 * 0.5) as u32).max(1);
+    let bh = ((h as f32 * 0.5) as u32).max(1);
+    let b1w = ((w as f32 * 0.25) as u32).max(1);
+    let b1h = ((h as f32 * 0.25) as u32).max(1);
+    let b2w = ((w as f32 * 0.125) as u32).max(1);
+    let b2h = ((h as f32 * 0.125) as u32).max(1);
+    if let Ok(t) = bloom0.single() {
+        let _ = images.insert(t.0.id(), Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None));
+    }
+    if let Ok(t) = bloom1.single() {
+        let _ = images.insert(t.0.id(), Image::new_target_texture(b1w, b1h, TextureFormat::Rgba16Float, None));
+    }
+    if let Ok(t) = bloom2.single() {
+        let _ = images.insert(t.0.id(), Image::new_target_texture(b2w, b2h, TextureFormat::Rgba16Float, None));
+    }
+    if let Ok(t) = bloom_final.single() {
+        let _ = images.insert(t.0.id(), Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None));
     }
     // Rescale offscreen + bloom quads against the offscreen resolution.
     for (mut t, f) in &mut quads.p0() {
@@ -389,6 +418,8 @@ fn mirror_params(
     time: Res<Time>,
     window: Query<&Window>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
+    mut brightpass_materials: ResMut<Assets<crate::render::material::BrightPassMaterial>>,
+    mut composite_materials: ResMut<Assets<crate::render::material::CompositeMaterial>>,
 ) {
     let win = match window.single() {
         Ok(w) => w,
@@ -425,5 +456,14 @@ fn mirror_params(
         u.bloom_threshold = params.bloom_threshold;
         u.bloom_strength = params.bloom_strength;
         u.exposure = params.exposure;
+    }
+    // Update brightpass threshold (live-tunable).
+    for (_, mat) in brightpass_materials.iter_mut() {
+        mat.threshold = params.bloom_threshold;
+    }
+    // Update composite material uniforms (bloom strength + exposure live-tunable).
+    for (_, mat) in composite_materials.iter_mut() {
+        mat.uniform.bloom_strength = params.bloom_strength;
+        mat.uniform.exposure = params.exposure;
     }
 }
