@@ -17,7 +17,7 @@ pub fn ui_system(
                     .show(ui, |ui| {
                         ui.add(egui::Slider::new(&mut camera.distance, 3.0..=200.0).text("Distance"));
                         ui.add(egui::Slider::new(&mut camera.yaw, -std::f32::consts::PI..=std::f32::consts::PI).text("Yaw"));
-                        ui.add(egui::Slider::new(&mut camera.pitch, 0.05..=3.09).text("Pitch"));
+                        ui.add(egui::Slider::new(&mut camera.pitch, (-std::f32::consts::PI + 0.05)..=(std::f32::consts::PI - 0.05)).text("Pitch"));
                         ui.add(egui::Slider::new(&mut camera.fov, 0.3..=2.0).text("FOV"));
                     });
                 egui::CollapsingHeader::new("Black Hole")

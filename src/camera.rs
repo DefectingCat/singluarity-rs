@@ -17,10 +17,9 @@ impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
             yaw: 0.0,
-            // Keep away from the π/2 gimbal pole: near the pole the world-Y (yaw)
-            // axis points almost straight out of the screen, so horizontal drag
-            // degenerates into an in-plane roll instead of a clean turn around
-            // the hole. ~0.7 rad (40°) is a 3/4 view with a comfortable yaw axis.
+            // ~0.7 rad (40°) is a comfortable 3/4 view of the disk. The basis()
+            // no longer has a gimbal pole, so any pitch is safe; this is just a
+            // nice default angle, not a pole-avoidance choice.
             pitch: 0.7,
             distance: 30.0,
             fov: 1.0,         // radians
@@ -37,6 +36,13 @@ impl OrbitCamera {
     /// in Bevy's right-handed Y-up coordinate system. The black hole sits at origin.
     /// Disk plane is the xz-plane (y=0); the disk tilt is applied in the shader
     /// via the params, so the camera basis here is in world space.
+    ///
+    /// `right` is derived from `yaw` alone (always a unit vector in the y=0 plane),
+    /// NOT from `forward × world_up`. The old cross-product form degenerated to a
+    /// zero vector when forward aligned with world-Y (pitch = ±π/2), flipping the
+    /// image. Decoupling right from forward removes that singularity, so pitch can
+    /// cross both poles with no roll/flip. This also keeps right exactly horizontal
+    /// for all pitch, eliminating a subtle roll the old form introduced.
     pub fn basis(&self) -> (Vec3, Vec3, Vec3, Vec3) {
         let cp = self.pitch.cos();
         let sp = self.pitch.sin();
@@ -50,8 +56,8 @@ impl OrbitCamera {
         );
         // Forward points from eye toward the origin.
         let forward = (-eye).normalize();
-        let world_up = Vec3::Y;
-        let right = forward.cross(world_up).normalize();
+        // Right depends on yaw only: a unit vector in the y=0 plane, never zero.
+        let right = Vec3::new(cy, 0.0, -sy);
         let up = right.cross(forward).normalize();
         (eye, forward, right, up)
     }
@@ -75,8 +81,16 @@ pub fn orbit_controller(
             // View-follows-cursor: dragging right rotates the view right,
             // dragging down tilts it down (inverts the old grab-the-scene mapping).
             camera.yaw += ev.delta.x * 0.005;
-            // Clamp pitch to avoid flipping.
-            camera.pitch = (camera.pitch - ev.delta.y * 0.005).clamp(0.05, std::f32::consts::PI - 0.05);
+            // Keep yaw in (-π, π] so it never drifts out of the UI slider's range
+            // (which would make touching the slider snap the view). cos/sin are
+            // periodic, so the wrap is visually lossless.
+            camera.yaw = (camera.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            // Full pitch range: the basis() has no gimbal pole now (right is yaw-only),
+            // so crossing ±π/2 no longer flips. The ±0.05 margin keeps eye off the
+            // exact origin-axis singularity where forward = ∓Y and yaw is undefined.
+            camera.pitch =
+                (camera.pitch - ev.delta.y * 0.005).clamp(-std::f32::consts::PI + 0.05, std::f32::consts::PI - 0.05);
         }
     }
     for ev in wheel.read() {
