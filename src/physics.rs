@@ -52,6 +52,26 @@ pub fn impact_parameter(eye: Vec3, dir: Vec3) -> f32 {
     eye.cross(dir).length()
 }
 
+/// Prograde Kerr ISCO in Rs units (Rs=1, so M=0.5). `chi = a/M ∈ [0,1]`.
+/// Bardeen-Press-Teukolsky (1972) closed form. Returns 6M=3.0 at chi=0,
+/// M=0.5 at chi=1.
+pub fn kerr_isco(chi: f32) -> f32 {
+    let m = 0.5;
+    let cbrt_pos = (1.0 + chi).cbrt();
+    let cbrt_neg = (1.0 - chi).cbrt();
+    let z1 = 1.0 + (1.0 - chi * chi).cbrt() * (cbrt_pos + cbrt_neg);
+    let z2 = (3.0 * chi * chi + z1 * z1).sqrt();
+    m * (3.0 + z2 - ((3.0 - z1) * (3.0 + z1 + 2.0 * z2)).sqrt())
+}
+
+/// Kerr event-horizon radius r+ in Rs units (Rs=1, M=0.5). `chi = a/M ∈ [0,1]`.
+/// Returns Rs=1.0 at chi=0, M=0.5 at chi=1.
+pub fn kerr_horizon(chi: f32) -> f32 {
+    let m = 0.5;
+    let a = chi * m;
+    m + (m * m - a * a).max(0.0).sqrt()
+}
+
 // Silence unused-import warning for Vec4 if not used; kept for future expansion.
 #[allow(dead_code)]
 fn _phantom(_v: Vec4) {}
