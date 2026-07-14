@@ -1,5 +1,12 @@
 //! CPU mirror of the shader physics, for unit-testing.
 //! Natural units: Rs = 1.
+//
+// These functions exist to be exercised by the integration test crate
+// (`tests/physics_test.rs`), not by the binary. The binary pulls this module
+// in only for `kerr_isco` (UI) and `kerr_horizon` (UI); the rest are test-only
+// mirrors of shader math. Silence the resulting dead-code noise at the module
+// level rather than per-function.
+#![allow(dead_code)]
 
 use bevy::math::{Vec3, Vec4};
 
