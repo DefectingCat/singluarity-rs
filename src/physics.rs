@@ -14,7 +14,7 @@ pub const RS: f32 = 1.0;
 /// Critical impact parameter for a Schwarzschild hole: bcrit = (3*sqrt(3)/2) * Rs.
 /// Written as a literal because `f32::sqrt` is not `const` on stable Rust.
 /// (3 * sqrt(3) / 2 = 2.598076211353316...)
-pub const BCRIT: f32 = 2.5980762;
+pub const BCRIT: f32 = 2.598_076;
 
 /// One Euler step of the discretized geodesic (mirrors the shader's `deriv`).
 pub fn bending_accel(pos: Vec3, dir: Vec3) -> Vec3 {
