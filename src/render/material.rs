@@ -38,6 +38,10 @@ pub struct BlackHoleUniforms {
     pub planet_count: u32,
     pub steps: u32,
     pub spin: f32,       // Phase 2: dimensionless Kerr spin χ = a/M ∈ [0,1].
+    pub star_aa: u32,
+    pub bloom_threshold: f32,
+    pub bloom_strength: f32,
+    pub exposure: f32,
     pub _pad5: f32,
 }
 
@@ -70,6 +74,10 @@ impl Default for BlackHoleUniforms {
             planet_count: 0,
             steps: 300,
             spin: 0.0,
+            star_aa: 1,
+            bloom_threshold: 1.0,
+            bloom_strength: 0.8,
+            exposure: 1.0,
             _pad5: 0.0,
         }
     }

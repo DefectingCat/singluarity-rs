@@ -261,5 +261,9 @@ fn mirror_params(
         u.planet_count = params.planet_count;
         u.steps = params.steps;
         u.spin = params.spin;
+        u.star_aa = params.star_aa as u32;
+        u.bloom_threshold = params.bloom_threshold;
+        u.bloom_strength = params.bloom_strength;
+        u.exposure = params.exposure;
     }
 }

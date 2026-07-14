@@ -27,6 +27,11 @@ pub struct BlackHoleParams {
     pub planet_count: u32,
     // Kerr (Phase 2; unused in Phase 1)
     pub spin: f32,
+    // Quality (Phase 3: cinematic rendering)
+    pub star_aa: bool,
+    pub bloom_threshold: f32,
+    pub bloom_strength: f32,
+    pub exposure: f32,
 }
 
 impl Default for BlackHoleParams {
@@ -48,6 +53,10 @@ impl Default for BlackHoleParams {
             skybox_intensity: 0.0, // procedural stars only by default
             planet_count: 0,
             spin: 0.0,
+            star_aa: if cfg!(target_arch = "wasm32") { false } else { true },
+            bloom_threshold: 1.0,
+            bloom_strength: 0.8,
+            exposure: 1.0,
         }
     }
 }

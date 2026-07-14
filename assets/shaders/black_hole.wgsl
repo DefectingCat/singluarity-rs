@@ -34,6 +34,10 @@ struct BlackHoleUniforms {
     planet_count: u32,
     steps: u32,
     spin: f32,
+    star_aa: u32,
+    bloom_threshold: f32,
+    bloom_strength: f32,
+    exposure: f32,
     _pad5: f32,
 };
 
@@ -82,16 +86,28 @@ fn hash13(p: vec3<f32>) -> f32 {
 
 fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
     let scale = 80.0;
-    let cell = floor(dir * scale);
+    let p = dir * scale;
+    let cell = floor(p);
     let h = hash13(cell);
     let threshold = 0.985;
     if (h > threshold) {
         let b = (h - threshold) / (1.0 - threshold);
         let col = mix(vec3<f32>(0.6, 0.7, 1.0), vec3<f32>(1.0, 0.9, 0.7), b);
-        let f = abs(dir * scale - cell);
-        let d = max(f.x, max(f.y, f.z));
-        let falloff = smoothstep(0.5, 0.0, d);
-        return col * b * falloff * 3.0 * intensity;
+        if (uniforms.star_aa != 0u) {
+            // Gaussian speck: distance to cell center, soft radial falloff.
+            // Produces a round 2-3 pixel anti-aliased disk instead of a square.
+            let center = cell + vec3<f32>(0.5);
+            let dist = length(p - center);
+            let radius = 0.25 + b * 0.4;
+            let falloff = exp(-dist * dist / (radius * radius));
+            return col * b * falloff * 4.0 * intensity;
+        } else {
+            // Original fast path: square-cell smoothstep (blocky but cheap).
+            let f = abs(p - cell);
+            let d = max(f.x, max(f.y, f.z));
+            let falloff = smoothstep(0.5, 0.0, d);
+            return col * b * falloff * 3.0 * intensity;
+        }
     }
     return vec3<f32>(0.0);
 }
