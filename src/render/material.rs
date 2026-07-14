@@ -37,7 +37,7 @@ pub struct BlackHoleUniforms {
     pub grid_enabled: u32,
     pub planet_count: u32,
     pub steps: u32,
-    pub _pad4: f32,
+    pub spin: f32,       // Phase 2: dimensionless Kerr spin χ = a/M ∈ [0,1].
     pub _pad5: f32,
 }
 
@@ -69,7 +69,7 @@ impl Default for BlackHoleUniforms {
             grid_enabled: 0,
             planet_count: 0,
             steps: 300,
-            _pad4: 0.0,
+            spin: 0.0,
             _pad5: 0.0,
         }
     }

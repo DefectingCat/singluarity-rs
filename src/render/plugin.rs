@@ -226,5 +226,6 @@ fn mirror_params(
         u.grid_enabled = params.grid_enabled as u32;
         u.planet_count = params.planet_count;
         u.steps = params.steps;
+        u.spin = params.spin;
     }
 }

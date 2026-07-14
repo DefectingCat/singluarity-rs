@@ -33,7 +33,7 @@ struct BlackHoleUniforms {
     grid_enabled: u32,
     planet_count: u32,
     steps: u32,
-    _pad4: f32,
+    spin: f32,
     _pad5: f32,
 };
 
