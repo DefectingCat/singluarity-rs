@@ -89,7 +89,7 @@ pub struct SphereData {
 
 pub const MAX_PLANETS: usize = 32;
 
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
 pub struct BlackHoleMaterial {
     #[uniform(0)]
     pub uniforms: BlackHoleUniforms,
@@ -130,12 +130,4 @@ impl Material2d for UpscaleMaterial {
     }
 }
 
-impl Default for BlackHoleMaterial {
-    fn default() -> Self {
-        Self {
-            uniforms: BlackHoleUniforms::default(),
-            skybox: None,
-            planets: Handle::default(),
-        }
-    }
-}
+
