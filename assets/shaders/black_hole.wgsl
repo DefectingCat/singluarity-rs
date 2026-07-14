@@ -248,6 +248,42 @@ fn grid_hit(prev: vec3<f32>, cur: vec3<f32>) -> vec3<f32> {
     return col * 0.5;
 }
 
+// One Dormand-Prince RK45 step. Returns the 5th-order solution and the
+// error estimate (y5 - y4) as a vec3 (position error; direction error is
+// folded in via normalize so we only need position error for step control).
+struct RkStep {
+    pos: vec3<f32>,
+    dir: vec3<f32>,
+    err: f32,
+};
+
+fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
+    // Butcher tableau (Dormand-Prince), 6 stages. Each deriv() returns Deriv{dpos, ddir}.
+    let k1 = deriv(pos, dir);
+    let p2 = pos + k1.dpos * dt * 0.2;
+    let d2 = normalize(dir + k1.ddir * dt * 0.2);
+    let k2 = deriv(p2, d2);
+    let p3 = pos + (k1.dpos * 0.075 + k2.dpos * 0.225) * dt;
+    let d3 = normalize(dir + (k1.ddir * 0.075 + k2.ddir * 0.225) * dt);
+    let k3 = deriv(p3, d3);
+    let p4 = pos + (k1.dpos * 0.3 + k2.dpos * -0.9 + k3.dpos * 1.2) * dt;
+    let d4 = normalize(dir + (k1.ddir * 0.3 + k2.ddir * -0.9 + k3.ddir * 1.2) * dt);
+    let k4 = deriv(p4, d4);
+    let p5 = pos + (k1.dpos * -11.0/54.0 + k2.dpos * 2.5 + k3.dpos * -70.0/27.0 + k4.dpos * 35.0/27.0) * dt;
+    let d5 = normalize(dir + (k1.ddir * -11.0/54.0 + k2.ddir * 2.5 + k3.ddir * -70.0/27.0 + k4.ddir * 35.0/27.0) * dt);
+    let k5 = deriv(p5, d5);
+    let p6 = pos + (k1.dpos * 1631.0/55296.0 + k2.dpos * 175.0/512.0 + k3.dpos * 575.0/13824.0 + k4.dpos * 44275.0/110592.0 + k5.dpos * 253.0/4096.0) * dt;
+    let d6 = normalize(dir + (k1.ddir * 1631.0/55296.0 + k2.ddir * 175.0/512.0 + k3.ddir * 575.0/13824.0 + k4.ddir * 44275.0/110592.0 + k5.ddir * 253.0/4096.0) * dt);
+    let k6 = deriv(p6, d6);
+    // 5th-order solution (used to advance).
+    let new_pos = pos + (k1.dpos * 37.0/378.0 + k3.dpos * 250.0/621.0 + k4.dpos * 125.0/594.0 + k5.dpos * 512.0/1771.0 + k6.dpos * 0.0) * dt;
+    let new_dir = normalize(dir + (k1.ddir * 37.0/378.0 + k3.ddir * 250.0/621.0 + k4.ddir * 125.0/594.0 + k5.ddir * 512.0/1771.0 + k6.ddir * 0.0) * dt);
+    // 4th-order solution (for error estimate).
+    let pos4 = pos + (k1.dpos * 2825.0/27648.0 + k3.dpos * 18575.0/48384.0 + k4.dpos * 13525.0/55296.0 + k5.dpos * 277.0/14336.0 + k6.dpos * 0.25) * dt;
+    let err = length(new_pos - pos4);
+    return RkStep(new_pos, new_dir, err);
+}
+
 // ====================== main ======================
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -258,37 +294,53 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Work in disk-local space: rotate eye + dir by -disk_tilt around X so the
     // disk lies on y=0. (disk_hit/disk_color assume disk-local coords.)
-    var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
-    var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
 
     // Total path length to integrate: enough to go from the camera, past the
     // hole, and far enough beyond to count as escaped.
     let eye_dist = length(uniforms.eye.xyz);
     let escape_r = max(eye_dist * 2.0, 100.0);
     let total_path = eye_dist + escape_r;
-    let dt = total_path / f32(uniforms.steps);
-    let steps = uniforms.steps;
+    // Adaptive RK45 constants.
+    let steps_max = uniforms.steps;
+    let dt_init = total_path / f32(steps_max);
+    let dt_min = dt_init * 0.25;
+    let dt_max = dt_init * 4.0;
+    let tol = 1e-3;
+    let r_plus = 0.5 + sqrt(max(0.25 - (uniforms.spin * 0.5) * (uniforms.spin * 0.5), 0.0));
 
-    // Front-to-back compositing.
+    var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
+    var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
+    var dt  = dt_init;
+    var prev = pos;
+    var budget = steps_max;
+
     var accum_color = vec3<f32>(0.0);
     var accum_alpha = 0.0;
 
-    var prev = pos;
-    for (var i: u32 = 0u; i < steps; i = i + 1u) {
-        let r = length(pos);
-        // Kerr horizon r+ = M + sqrt(M² - a²), M=0.5, a=χ·M. Equals Rs at χ=0.
-        let chi = uniforms.spin;
-        let m = 0.5;
-        let a = chi * m;
-        let r_plus = m + sqrt(max(m * m - a * a, 0.0));
+    loop {
+        if (budget == 0u) { break; }
+
+        let step = rk45_step(pos, d, dt);
+        let err = step.err;
+
+        if (err > tol * 10.0) {
+            // Reject: shrink dt, retry (does not consume budget).
+            dt = clamp(dt * 0.2, dt_min, dt_max);
+            continue;
+        }
+        // Accept: consume one budget unit, refine dt.
+        budget = budget - 1u;
+        dt = clamp(dt * pow(tol / max(err, 1e-12), 0.2), dt_min, dt_max);
+
+        let new_pos = step.pos;
+        let new_dir = step.dir;
+
+        let r = length(new_pos);
         if (r < r_plus) {
-            // Captured: whatever we've composited so far is the result.
             break;
         }
         if (r > escape_r) {
-            // Escaped: add background along the (disk-local) final dir.
-            // Rotate back to world for the sky/stars sample.
-            let world_dir = normalize(rot_x(d, uniforms.disk_tilt));
+            let world_dir = normalize(rot_x(new_dir, uniforms.disk_tilt));
             var bg = vec3<f32>(0.0);
             bg += star_color(world_dir, uniforms.star_intensity);
             if (uniforms.skybox_intensity > 0.0) {
@@ -298,14 +350,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             accum_alpha = 1.0;
             break;
         }
-
-        // RK4 step (single step), then test disk crossing on the segment.
-        let k1 = deriv(pos, d);
-        let k2 = deriv(pos + k1.dpos * dt * 0.5, normalize(d + k1.ddir * dt * 0.5));
-        let k3 = deriv(pos + k2.dpos * dt * 0.5, normalize(d + k2.ddir * dt * 0.5));
-        let k4 = deriv(pos + k3.dpos * dt, normalize(d + k3.ddir * dt));
-        let new_pos = pos + (k1.dpos + 2.0*k2.dpos + 2.0*k3.dpos + k4.dpos) * dt / 6.0;
-        let new_dir = normalize(d + (k1.ddir + 2.0*k2.ddir + 2.0*k3.ddir + k4.ddir) * dt / 6.0);
 
         if (disk_hit(prev, new_pos)) {
             let ty = prev.y / (prev.y - new_pos.y);
