@@ -1,5 +1,26 @@
 use bevy::prelude::*;
 
+/// Bloom pyramid depth (number of bloom textures).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum BloomQuality {
+    Off,     // no bloom, scene-only ACES composite
+    Low,     // 1 level: brightpass → composite (soft halo)
+    Medium,  // 2 levels: brightpass → 1 down → 1 up → composite
+    #[default]
+    High,    // 3 levels: brightpass → 2 down → 2 up → composite (full cinematic)
+}
+
+impl BloomQuality {
+    pub fn levels(self) -> u32 {
+        match self {
+            BloomQuality::Off => 0,
+            BloomQuality::Low => 1,
+            BloomQuality::Medium => 2,
+            BloomQuality::High => 3,
+        }
+    }
+}
+
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
@@ -32,6 +53,7 @@ pub struct BlackHoleParams {
     pub bloom_threshold: f32,
     pub bloom_strength: f32,
     pub exposure: f32,
+    pub bloom_quality: BloomQuality,
 }
 
 impl Default for BlackHoleParams {
@@ -57,6 +79,7 @@ impl Default for BlackHoleParams {
             bloom_threshold: 1.0,
             bloom_strength: 0.8,
             exposure: 1.0,
+            bloom_quality: if cfg!(target_arch = "wasm32") { BloomQuality::Low } else { BloomQuality::High },
         }
     }
 }
