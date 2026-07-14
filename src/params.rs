@@ -3,7 +3,7 @@ use bevy::prelude::*;
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
-#[allow(dead_code)] // render_scale + spin are reserved for Phase 2 (Kerr) / future work
+#[allow(dead_code)] // spin is reserved for Phase 2 (Kerr); render_scale now wired in Phase 2
 pub struct BlackHoleParams {
     // Physics (natural units, Rs = 1)
     pub rs: f32,
@@ -41,7 +41,7 @@ impl Default for BlackHoleParams {
             doppler_enabled: true,
             doppler_strength: 1.0,
             steps: if cfg!(target_arch = "wasm32") { 200 } else { 300 },
-            render_scale: if cfg!(target_arch = "wasm32") { 0.75 } else { 1.0 },
+            render_scale: if cfg!(target_arch = "wasm32") { 0.5 } else { 0.75 },
             star_intensity: 1.0,
             grid_enabled: false,
             grid_density: 1.0,

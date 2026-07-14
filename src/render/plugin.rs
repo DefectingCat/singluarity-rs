@@ -1,13 +1,37 @@
+use bevy::camera::RenderTarget;
+use bevy::camera::visibility::RenderLayers;
+use bevy::image::Image;
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureFormat;
 use bevy::render::storage::ShaderBuffer;
 use bevy::sprite_render::Material2dPlugin;
 
 use super::material::BlackHoleMaterial;
 
+/// Lower bound for `render_scale`. Used to clamp the offscreen target resolution
+/// in both spawn and resize paths. The UI slider floor mirrors this literal.
+const MIN_RENDER_SCALE: f32 = 0.25;
+
 /// Marks the full-screen quad so the resize system can find and rescale it
 /// when the window is resized (the mesh is built once at startup).
 #[derive(Component)]
 struct FullscreenQuad;
+
+/// The offscreen Image the black-hole shader renders into (sub-resolution).
+#[derive(Component)]
+pub struct OffscreenTarget(pub Handle<Image>);
+
+/// The camera that renders the black-hole quad into the offscreen Image.
+#[derive(Component)]
+pub struct OffscreenCamera;
+
+/// The camera that draws the upscaled offscreen Image to the window.
+#[derive(Component)]
+pub struct UpscaleCamera;
+
+/// The quad that displays the upscaled image.
+#[derive(Component)]
+struct UpscaleQuad;
 
 pub struct BlackHolePlugin;
 
@@ -17,6 +41,7 @@ impl Plugin for BlackHolePlugin {
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
+            .add_plugins(Material2dPlugin::<crate::render::material::UpscaleMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_default_planet)
@@ -25,7 +50,7 @@ impl Plugin for BlackHolePlugin {
                 (
                     crate::camera::orbit_controller,
                     mirror_params,
-                    fit_quad_to_window,
+                    resize_offscreen,
                     nudge_camera,
                 ),
             )
@@ -40,27 +65,42 @@ fn spawn_fullscreen_quad(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
+    mut upscale_materials: ResMut<Assets<crate::render::material::UpscaleMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
+    mut images: ResMut<Assets<Image>>,
     window: Query<&Window>,
+    params: Res<crate::params::BlackHoleParams>,
 ) {
     let win = match window.single() {
         Ok(w) => w,
         Err(_) => return,
     };
+    let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
+    let w = ((win.width() * scale) as u32).max(1);
+    let h = ((win.height() * scale) as u32).max(1);
+
+    // Offscreen target at sub-resolution. new_target_texture sets RENDER_ATTACHMENT.
+    let offscreen = images.add(Image::new_target_texture(
+        w,
+        h,
+        TextureFormat::Bgra8UnormSrgb,
+        None,
+    ));
+    commands.spawn(OffscreenTarget(offscreen.clone()));
+
+    // --- Black-hole quad (renders into the offscreen Image) ---
     // Camera2d's default projection is ScalingMode::WindowSize (1 world unit =
     // 1 pixel, view centered at origin spanning [-w/2,w/2]×[-h/2,h/2]). A unit
-    // quad (2×2) scaled by (w/2, h/2) fills the screen. fit_quad_to_window
-    // updates this on resize.
-    let half_w = win.width() / 2.0;
-    let half_h = win.height() / 2.0;
+    // quad (2×2) scaled by (w/2, h/2) fills the offscreen Image.
+    let half_w = w as f32 / 2.0;
+    let half_h = h as f32 / 2.0;
     // CRITICAL: the planets storage binding (Handle<ShaderBuffer>) must point
     // at a REAL buffer asset, not Handle::default(). A default handle makes
     // AsBindGroup return RetryNextUpdate every frame, which silently skips the
     // quad's draw — the screen shows only the camera clear color. Pre-fill a
     // MAX_PLANETS-sized buffer of zeroed SphereData; upload_planets updates it.
     let planets_buffer = buffers.add(ShaderBuffer::from(vec![
-        super::material::SphereData::default(
-        );
+        super::material::SphereData::default();
         super::material::MAX_PLANETS
     ]));
     let mut material = BlackHoleMaterial::default();
@@ -70,25 +110,65 @@ fn spawn_fullscreen_quad(
         MeshMaterial2d(materials.add(material)),
         Transform::default().with_scale(Vec3::new(half_w, half_h, 1.0)),
         FullscreenQuad,
+        RenderLayers::layer(0),
     ));
-    commands.spawn(Camera2d);
+    // Offscreen camera: order -1 so it renders before the upscale camera.
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: -1,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.1, 0.1, 0.1)),
+            ..default()
+        },
+        RenderTarget::Image(offscreen.clone().into()),
+        Msaa::Off,
+        OffscreenCamera,
+        RenderLayers::layer(0),
+    ));
+
+    // --- Upscale quad (draws offscreen Image to the window) ---
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
+        MeshMaterial2d(upscale_materials.add(crate::render::material::UpscaleMaterial {
+            source: offscreen.clone(),
+        })),
+        Transform::default().with_scale(Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0)),
+        UpscaleQuad,
+        RenderLayers::layer(1),
+    ));
+    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, RenderLayers::layer(1)));
 }
 
-/// Rescale the full-screen quad to the live window size so it always fills the
-/// camera's view (Camera2d default projection: 1 world unit = 1 pixel).
-fn fit_quad_to_window(
+/// Recreate the offscreen Image and rescale both quads on window resize,
+/// honoring the live `render_scale` param.
+fn resize_offscreen(
+    mut images: ResMut<Assets<Image>>,
+    params: Res<crate::params::BlackHoleParams>,
+    target: Query<&OffscreenTarget>,
+    mut bh_quad: Query<&mut Transform, With<FullscreenQuad>>,
+    mut up_quad: Query<&mut Transform, With<UpscaleQuad>>,
     window: Query<&Window>,
-    mut quad: Query<&mut Transform, With<FullscreenQuad>>,
+    mut resized: MessageReader<bevy::window::WindowResized>,
 ) {
-    let win = match window.single() {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    let target = Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0);
-    for mut transform in &mut quad {
-        if transform.scale != target {
-            transform.scale = target;
-        }
+    if resized.read().next().is_none() {
+        return;
+    }
+    let Ok(win) = window.single() else { return; };
+    let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
+    let w = ((win.width() * scale) as u32).max(1);
+    let h = ((win.height() * scale) as u32).max(1);
+    if let Ok(handle) = target.single() {
+        let img = Image::new_target_texture(w, h, TextureFormat::Bgra8UnormSrgb, None);
+        // insert returns Result in 0.19 (Err if the asset is locked this frame).
+        // Resize fires repeatedly while the user drags, so a dropped frame's
+        // insert is harmless — it'll succeed on the next WindowResized.
+        let _ = images.insert(handle.0.id(), img);
+    }
+    for mut t in &mut bh_quad {
+        t.scale = Vec3::new(w as f32 / 2.0, h as f32 / 2.0, 1.0);
+    }
+    for mut t in &mut up_quad {
+        t.scale = Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0);
     }
 }
 
@@ -96,8 +176,14 @@ fn fit_quad_to_window(
 /// rendering after the first frame. Oscillate the camera transform by a
 /// sub-pixel amount each frame so the view matrix changes and the render graph
 /// keeps producing frames. Amplitude is far below one pixel, so the image is
-/// visually stable. Remove when the upstream regression is fixed.
-fn nudge_camera(time: Res<Time>, mut camera: Query<&mut Transform, With<Camera2d>>) {
+/// visually stable. Applies to BOTH the offscreen camera (the most static
+/// entity — its freeze would make the upscale camera re-sample a stale
+/// texture every frame → frozen view) and the upscale camera (the one
+/// rendering to the window). Remove when the upstream regression is fixed.
+fn nudge_camera(
+    time: Res<Time>,
+    mut camera: Query<&mut Transform, Or<(With<OffscreenCamera>, With<UpscaleCamera>)>>,
+) {
     let nudge = (time.elapsed_secs() * 5.0).sin() * 1e-3;
     for mut t in &mut camera {
         t.translation.x = nudge;

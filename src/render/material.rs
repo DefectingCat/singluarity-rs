@@ -115,6 +115,21 @@ impl Material2d for BlackHoleMaterial {
     }
 }
 
+/// Samples the sub-resolution offscreen render and blits it fullscreen.
+/// Bound to a second Camera2d that draws after the offscreen camera.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct UpscaleMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    pub source: Handle<Image>,
+}
+
+impl Material2d for UpscaleMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/upscale.wgsl".into()
+    }
+}
+
 impl Default for BlackHoleMaterial {
     fn default() -> Self {
         Self {
