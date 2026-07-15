@@ -134,7 +134,7 @@ impl Default for BlackHoleParams {
             disk_outer: 15.0,
             disk_tilt: 0.45,       // ~25.8 deg
             disk_brightness: 1.0,
-            disk_rotation_speed: 0.5,
+            disk_rotation_speed: 1.2,
             doppler_enabled: true,
             doppler_strength: 1.0,
             steps: if cfg!(target_arch = "wasm32") { 200 } else { 300 },

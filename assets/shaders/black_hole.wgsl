@@ -387,7 +387,10 @@ fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     // faster than outer — correct differential rotation.
     let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
-    let col = disk_emission(r, pos, dir, 0.6 + 0.4 * noise);
+    // Contrast-boosted, mean-preserving: low floor + high peak. The Keplerian
+    // flow (the `rot` z term above) reads as moving clumps rather than a flat
+    // glow, without dimming the disk (mean ≈ old 0.6 + 0.4·n ≈ 0.8).
+    let col = disk_emission(r, pos, dir, 0.2 + 1.6 * noise * noise);
 
     return DiskSample(vec3<f32>(col), 0.85);
 }
@@ -422,9 +425,18 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let filament = ridged_fbm(sp * uniforms.filament_freq + warp * 1.5,
                               filament_octaves, uniforms.filament_sharpness);
 
-    // Layer 2: density clumping (soft ramp, no hard cut → avoids patchiness).
+    // Layer 2: density. The floor is HIGH on purpose: alpha accumulates from
+    // this field, so a low floor (the earlier 0.15 + 1.5·n² form) let noise
+    // valleys drop to ~0.28 and the disk became see-through there. Keeping the
+    // floor at ~0.55 (≈ the original 0.35+0.65·n valleys) keeps the disk solid
+    // and opaque. The rotation is NOT carried by density holes — it is carried
+    // by the `brightness` filament term below, which is polar-sampled and
+    // rotates via the `+ rot` in `sp`. So: solid opacity here, moving streaks
+    // via brightness. The squaring only sharpens the mild clumping for a bit
+    // of thickness variation; it does not punch holes.
     let density_noise = fbm3(sp * uniforms.density_freq + warp, density_octaves);
-    let base_density = (0.35 + 0.65 * density_noise) * uniforms.density_strength;
+    let clumped = density_noise * density_noise;
+    let base_density = (0.55 + 0.9 * clumped) * uniforms.density_strength;
 
     // Layer 3: logarithmic-spiral arm modulation, advected by Keplerian shear.
     let arm_phase = phi * uniforms.arm_count + log(max(r, 0.1)) * uniforms.arm_tightness - rot;
@@ -432,7 +444,12 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let arm_mod = mix(1.0, pow(arm, 2.0), uniforms.arm_strength);
 
     let total_density = base_density * arm_mod;
-    let brightness = 0.5 + filament;
+    // Filament (ridged) brightness — the PRIMARY carrier of visible rotation.
+    // Polar-sampled (via `sp`), so the `+ rot` Keplerian term advects these
+    // bright/dim tangential streaks around the hole on a solid (opaque) disk.
+    // Wide contrast (0.1 → 1.9) so the sweeping streaks read clearly without
+    // needing see-through gaps.
+    let brightness = 0.1 + 1.8 * filament;
 
     let col = disk_emission(r, pos, dir, brightness);
 
