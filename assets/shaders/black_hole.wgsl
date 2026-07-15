@@ -85,31 +85,53 @@ fn hash13(p: vec3<f32>) -> f32 {
 }
 
 fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
+    // The unit-sphere direction is hashed into a 3D cell grid. A pixel's ray
+    // usually sits near a cell boundary, so evaluating only the home cell clips
+    // any star whose center lies in a neighbor — that clip is what made stars
+    // look square even with the Gaussian AA path: the hash changes at the cell
+    // edge, so the falloff could never reach zero and the visible shape was
+    // just the cell's bounding box. Scan the 3×3×3 neighborhood so each star's
+    // radial falloff extends across the whole cell it lives in.
     let scale = 80.0;
     let p = dir * scale;
-    let cell = floor(p);
-    let h = hash13(cell);
+    let base = floor(p);
     let threshold = 0.985;
-    if (h > threshold) {
-        let b = (h - threshold) / (1.0 - threshold);
-        let col = mix(vec3<f32>(0.6, 0.7, 1.0), vec3<f32>(1.0, 0.9, 0.7), b);
-        if (uniforms.star_aa != 0u) {
-            // Gaussian speck: distance to cell center, soft radial falloff.
-            // Produces a round 2-3 pixel anti-aliased disk instead of a square.
-            let center = cell + vec3<f32>(0.5);
-            let dist = length(p - center);
-            let radius = 0.25 + b * 0.4;
-            let falloff = exp(-dist * dist / (radius * radius));
-            return col * b * falloff * 4.0 * intensity;
-        } else {
-            // Original fast path: square-cell smoothstep (blocky but cheap).
-            let f = abs(p - cell);
-            let d = max(f.x, max(f.y, f.z));
-            let falloff = smoothstep(0.5, 0.0, d);
-            return col * b * falloff * 3.0 * intensity;
+    // Brightest contributor wins: `best` = (brightness, r, g, b).
+    var best = vec4<f32>(0.0);
+    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+                let cell = base + vec3<f32>(f32(dx), f32(dy), f32(dz));
+                let h = hash13(cell);
+                if (h <= threshold) { continue; }
+                let b = (h - threshold) / (1.0 - threshold);
+                let center = cell + vec3<f32>(0.5);
+                let dist = length(p - center); // Euclidean → round, never square
+                let col = mix(vec3<f32>(0.6, 0.7, 1.0), vec3<f32>(1.0, 0.9, 0.7), b);
+                if (uniforms.star_aa != 0u) {
+                    // Soft Gaussian glow. The neighborhood scan lets the falloff
+                    // decay smoothly to ~0 at the cell boundary instead of being
+                    // hard-clipped, so the star is a round anti-aliased disk.
+                    let radius = 0.25 + b * 0.4;
+                    let falloff = exp(-dist * dist / (radius * radius));
+                    let bright = b * falloff;
+                    if (bright > best.x) {
+                        best = vec4<f32>(bright, col.r, col.g, col.b);
+                    }
+                } else {
+                    // Tight round disk: smoothstep on Euclidean distance.
+                    let radius = 0.5;
+                    let falloff = smoothstep(radius, 0.0, dist);
+                    let bright = b * falloff;
+                    if (bright > best.x) {
+                        best = vec4<f32>(bright, col.r, col.g, col.b);
+                    }
+                }
+            }
         }
     }
-    return vec3<f32>(0.0);
+    let gain = select(3.0, 4.0, uniforms.star_aa != 0u);
+    return best.yzw * best.x * gain * intensity;
 }
 
 // --- skybox ---
