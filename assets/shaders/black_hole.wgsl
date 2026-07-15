@@ -316,15 +316,17 @@ fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     return DiskSample(vec3<f32>(col), 0.85);
 }
 
-// Volumetric disk color: ridged filaments drive brightness, a smoothstep-
-// gated FBM drives density clumping, and a logarithmic-spiral term (riding
-// the Keplerian shear `rot`) drives large-scale arm structure. The three
-// signals multiply — density says where matter is, filaments say how bright,
-// arms say how it's distributed.
+// Volumetric disk color. Noise is sampled in POLAR coordinates, not the
+// raw Cartesian pos, because sampling Cartesian (x,y,z) on a disk produces
+// radial spokes: r changes move x/z a lot (high-frequency stripes) while a
+// full angular sweep revisits correlated lattice points (weak variation),
+// so stripes elongate along radius into spokes. Polar sampling (r_norm,
+// phi·freq, height) decouples the two axes and lets turbulence flow
+// tangentially — the physically correct pattern for a rotating fluid.
 fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let r = r_of(pos);
+    let phi = atan2(pos.z, pos.x);
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
-    let flow = vec3<f32>(0.0, 0.0, rot);
 
     // Octave triplet from the quality tier.
     let q = uniforms.disk_quality;
@@ -333,25 +335,32 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     else if (q == 2u) { filament_octaves = 4u; density_octaves = 3u; warp_octaves = 3u; }
     // q == 3u keeps the High defaults above; q == 0u is never passed here.
 
-    // Domain warp: distorts sample coords so filaments curve and bend.
-    let warp = fbm3(pos * 0.8 + flow * 0.1, warp_octaves);
+    // Polar sample coordinate: (r normalized, angle × freq + Keplerian flow,
+    // height within slab). The flow term advects the noise so inner radii
+    // (faster rotation) drift ahead of outer radii — differential rotation.
+    let r_norm = r / uniforms.disk_inner;
+    let h = pos.y / max(uniforms.disk_half_thickness, 1e-3);
+    let sp = vec3<f32>(r_norm, phi * 2.5 + rot, h);
 
-    // Layer 1: ridged bright filaments.
-    let filament = ridged_fbm(pos * uniforms.filament_freq + warp * 1.5 + flow * 0.3,
+    // Domain warp in polar space: distorts sample coords so filaments bend.
+    let warp = fbm3(sp * 0.8, warp_octaves);
+
+    // Layer 1: ridged bright filaments (polar-sampled → tangential streaks).
+    let filament = ridged_fbm(sp * uniforms.filament_freq + warp * 1.5,
                               filament_octaves, uniforms.filament_sharpness);
 
-    // Layer 2: density clumping (smoothstep makes a definite gas/void boundary).
-    let density_noise = fbm3(pos * uniforms.density_freq + warp, density_octaves);
-    let base_density = smoothstep(0.3, 0.7, density_noise) * uniforms.density_strength;
+    // Layer 2: density clumping (soft, no hard smoothstep cut → avoids
+    // a patchy/over-transparent slab).
+    let density_noise = fbm3(sp * uniforms.density_freq + warp, density_octaves);
+    let base_density = (0.35 + 0.65 * density_noise) * uniforms.density_strength;
 
     // Layer 3: logarithmic-spiral arm modulation, advected by Keplerian shear.
-    let phi = atan2(pos.z, pos.x);
-    let arm_phase = phi * uniforms.arm_count + log(r) * uniforms.arm_tightness - rot;
+    let arm_phase = phi * uniforms.arm_count + log(max(r, 0.1)) * uniforms.arm_tightness - rot;
     let arm = 0.5 + 0.5 * cos(arm_phase);
     let arm_mod = mix(1.0, pow(arm, 2.0), uniforms.arm_strength);
 
     let total_density = base_density * arm_mod;
-    let brightness = filament;
+    let brightness = 0.5 + filament;
 
     let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
     let tcol = temperature_color(t);
