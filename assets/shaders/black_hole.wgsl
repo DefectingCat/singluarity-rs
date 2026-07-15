@@ -39,6 +39,15 @@ struct BlackHoleUniforms {
     bloom_strength: f32,
     exposure: f32,
     _pad5: f32,
+    disk_half_thickness: f32,
+    filament_freq: f32,
+    filament_sharpness: f32,
+    density_freq: f32,
+    density_strength: f32,
+    arm_count: f32,
+    arm_tightness: f32,
+    arm_strength: f32,
+    disk_quality: u32,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
