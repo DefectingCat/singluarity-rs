@@ -10,8 +10,12 @@ pub fn ui_system(
     if let Ok(ctx) = contexts.ctx_mut() {
         egui::Window::new("Controls")
             .collapsible(true)
+            .resizable(true)
             .default_pos([16.0, 16.0])
+            .default_width(300.0)
+            .default_height(560.0)
             .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
                 egui::CollapsingHeader::new("Camera")
                     .default_open(true)
                     .show(ui, |ui| {
@@ -114,6 +118,7 @@ pub fn ui_system(
                         ui.checkbox(&mut params.star_aa, "Anti-aliased stars");
                         ui.label("MSAA is decorative on a fullscreen shader (no geometry edges to sample).");
                     });
+            });
             });
         // egui captures pointer when the cursor is over a window or being interacted with.
         wants.0 = ctx.egui_wants_pointer_input();
