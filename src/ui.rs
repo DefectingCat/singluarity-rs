@@ -36,6 +36,30 @@ pub fn ui_system(
                         ui.add(egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).text("Brightness"));
                         ui.add(egui::Slider::new(&mut params.disk_rotation_speed, 0.0..=3.0).text("Rotation speed"));
                     });
+                egui::CollapsingHeader::new("Disk Turbulence")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        use crate::params::DiskQuality;
+                        let mut q = params.disk_quality;
+                        egui::ComboBox::from_label("Disk quality")
+                            .selected_text(format!("{:?}", q))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut q, DiskQuality::Off, "Off");
+                                ui.selectable_value(&mut q, DiskQuality::Low, "Low");
+                                ui.selectable_value(&mut q, DiskQuality::Medium, "Medium");
+                                ui.selectable_value(&mut q, DiskQuality::High, "High");
+                            });
+                        params.disk_quality = q;
+                        let on = q != DiskQuality::Off;
+                        ui.add_enabled(on, egui::Slider::new(&mut params.disk_half_thickness, 0.05..=1.0).text("Half thickness"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.filament_freq, 0.2..=4.0).text("Filament frequency"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.filament_sharpness, 1.0..=6.0).text("Filament sharpness"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.density_freq, 0.2..=3.0).text("Density frequency"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.density_strength, 0.0..=2.0).text("Density strength"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.arm_count, 0.0..=6.0).text("Arm count"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.arm_tightness, 0.0..=6.0).text("Arm tightness"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.arm_strength, 0.0..=1.0).text("Arm strength"));
+                    });
                 egui::CollapsingHeader::new("Doppler").show(ui, |ui| {
                     ui.checkbox(&mut params.doppler_enabled, "Enabled");
                     ui.add_enabled(params.doppler_enabled, egui::Slider::new(&mut params.doppler_strength, 0.0..=3.0).text("Strength"));
