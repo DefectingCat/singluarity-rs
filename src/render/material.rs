@@ -76,7 +76,7 @@ impl Default for BlackHoleUniforms {
             _pad3: 0.0,
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 15.0,
+            disk_outer: 25.0,
             disk_tilt: 0.45,
             disk_brightness: 1.0,
             disk_rotation_speed: 0.5,
@@ -94,17 +94,17 @@ impl Default for BlackHoleUniforms {
             bloom_strength: 0.8,
             exposure: 1.0,
             _pad5: 0.0,
-            disk_half_thickness: 0.3,
+            disk_half_thickness: 0.15,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 0.8,
-            density_strength: 1.0,
+            density_strength: 1.2,
             arm_count: 2.0,
             arm_tightness: 2.0,
             arm_strength: 0.5,
             disk_quality: 3, // High
-            disk_color_mode: 0, // Gradient (preserves prior appearance)
-            disk_temp: 10000.0,
+            disk_color_mode: 1, // Blackbody (Novikov-Thorne + Kerr Doppler)
+            disk_temp: 6500.0,
             jets_enabled: 1,
             jets_strength: 1.0,
         }

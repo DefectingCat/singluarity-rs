@@ -110,7 +110,8 @@ pub struct BlackHoleParams {
     pub exposure: f32,
     pub bloom_quality: BloomQuality,
     // Disk turbulence (Phase 3.1: volumetric disk)
-    pub disk_half_thickness: f32,
+    pub disk_half_thickness: f32, // H/R ratio (scale height / radius); NOT absolute
+
     pub filament_freq: f32,
     pub filament_sharpness: f32,
     pub density_freq: f32,
@@ -131,7 +132,7 @@ impl Default for BlackHoleParams {
         Self {
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 15.0,
+            disk_outer: 25.0, // Gargantua-like extent (was 15.0)
             disk_tilt: 0.45,       // ~25.8 deg
             disk_brightness: 1.0,
             disk_rotation_speed: 1.2,
@@ -150,17 +151,28 @@ impl Default for BlackHoleParams {
             bloom_strength: 0.8,
             exposure: 1.0,
             bloom_quality: if cfg!(target_arch = "wasm32") { BloomQuality::Low } else { BloomQuality::High },
-            disk_half_thickness: if cfg!(target_arch = "wasm32") { 0.2 } else { 0.3 },
+            // H/R ratio (was an absolute world-space half-height). 0.15 = standard
+            // thin-disk scale height; the slab now scales with radius, so a ray
+            // through large r traverses a proportionally thicker disk.
+            disk_half_thickness: 0.15,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 0.8,
-            density_strength: 1.0,
+            // Raised from 1.0: the new density model has no 0.55 floor and decays
+            // to 0 at the edges, so a slightly higher multiplier keeps the bulk
+            // opaque after per-step integration.
+            density_strength: 1.2,
             arm_count: 2.0,
             arm_tightness: 2.0,
             arm_strength: 0.5,
             disk_quality: if cfg!(target_arch = "wasm32") { DiskQuality::Low } else { DiskQuality::High },
-            disk_color_mode: DiskColorMode::Gradient, // keep prior look as the default
-            disk_temp: 10000.0,
+            // Blackbody: the Novikov-Thorne radial temperature gradient × Kerr
+            // Doppler gives the smooth white-hot inner → deep-orange outer look
+            // (closer to Gargantua than the hand-tuned Gradient mode).
+            disk_color_mode: DiskColorMode::Blackbody,
+            // 6500 K (was 10000): tuned so the NT profile yields a warm-white
+            // inner disk fading to deep orange at the outer edge.
+            disk_temp: 6500.0,
             jets_enabled: true,
             jets_strength: 1.0,
         }

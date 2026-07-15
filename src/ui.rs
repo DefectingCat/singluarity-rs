@@ -35,7 +35,7 @@ pub fn ui_system(
                     .default_open(true)
                     .show(ui, |ui| {
                         // disk_inner removed — now spin-derived (see Black Hole section).
-                        ui.add(egui::Slider::new(&mut params.disk_outer, 6.0..=40.0).text("Outer radius"));
+                        ui.add(egui::Slider::new(&mut params.disk_outer, 6.0..=50.0).text("Outer radius"));
                         ui.add(egui::Slider::new(&mut params.disk_tilt, 0.0..=std::f32::consts::PI).text("Tilt"));
                         ui.add(egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).text("Brightness"));
                         ui.add(egui::Slider::new(&mut params.disk_rotation_speed, 0.0..=3.0).text("Rotation speed"));
@@ -68,7 +68,7 @@ pub fn ui_system(
                             });
                         params.disk_quality = q;
                         let on = q != DiskQuality::Off;
-                        ui.add_enabled(on, egui::Slider::new(&mut params.disk_half_thickness, 0.05..=1.0).text("Half thickness"));
+                        ui.add_enabled(on, egui::Slider::new(&mut params.disk_half_thickness, 0.02..=0.3).text("Thickness (H/R)"));
                         ui.add_enabled(on, egui::Slider::new(&mut params.filament_freq, 0.2..=4.0).text("Filament frequency"));
                         ui.add_enabled(on, egui::Slider::new(&mut params.filament_sharpness, 1.0..=6.0).text("Filament sharpness"));
                         ui.add_enabled(on, egui::Slider::new(&mut params.density_freq, 0.2..=3.0).text("Density frequency"));
