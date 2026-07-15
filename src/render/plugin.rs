@@ -620,6 +620,15 @@ fn mirror_params(
         u.bloom_threshold = params.bloom_threshold;
         u.bloom_strength = params.bloom_strength;
         u.exposure = params.exposure;
+        u.disk_half_thickness = params.disk_half_thickness;
+        u.filament_freq = params.filament_freq;
+        u.filament_sharpness = params.filament_sharpness;
+        u.density_freq = params.density_freq;
+        u.density_strength = params.density_strength;
+        u.arm_count = params.arm_count;
+        u.arm_tightness = params.arm_tightness;
+        u.arm_strength = params.arm_strength;
+        u.disk_quality = params.disk_quality.as_u32();
     }
     // Update brightpass threshold (live-tunable).
     for (_, mat) in brightpass_materials.iter_mut() {

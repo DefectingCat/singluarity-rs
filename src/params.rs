@@ -44,6 +44,16 @@ impl DiskQuality {
             DiskQuality::High => (5, 4, 3),
         }
     }
+
+    /// Tier as a u32 for the WGSL uniform selector.
+    pub fn as_u32(self) -> u32 {
+        match self {
+            DiskQuality::Off => 0,
+            DiskQuality::Low => 1,
+            DiskQuality::Medium => 2,
+            DiskQuality::High => 3,
+        }
+    }
 }
 
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
