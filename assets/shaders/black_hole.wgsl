@@ -226,6 +226,26 @@ fn fbm3(p: vec3<f32>, octaves: u32) -> f32 {
     return sum;
 }
 
+// Ridged multifractal noise: 1 - |2n-1| turns value-noise gradients into
+// sharp ridges (peak where n=0.5, zero at n=0 and n=1). Raising to
+// `sharpness` thins the ridges into filaments. MAX_OCTAVES-with-break is
+// the conservative WebGPU form for a runtime-chosen octave count.
+fn ridged_fbm(p: vec3<f32>, octaves: u32, sharpness: f32) -> f32 {
+    const MAX_OCTAVES = 6u;
+    var sum = 0.0;
+    var amp = 0.5;
+    var freq = 1.0;
+    for (var i: u32 = 0u; i < MAX_OCTAVES; i = i + 1u) {
+        if (i >= octaves) { break; }
+        let n = value_noise3(p * freq);
+        let ridge = 1.0 - abs(2.0 * n - 1.0);
+        sum = sum + amp * pow(ridge, sharpness);
+        freq = freq * 2.0;
+        amp = amp * 0.5;
+    }
+    return sum;
+}
+
 fn disk_noise(pos: vec3<f32>, t: f32) -> f32 {
     let warp = fbm3(pos * 0.8 + vec3<f32>(0.0, 0.0, t * 0.1), 3u);
     let n = fbm3(pos * 2.0 + warp * 1.5 + vec3<f32>(0.0, 0.0, t * 0.3), 4u);
