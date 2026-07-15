@@ -252,10 +252,49 @@ fn disk_noise(pos: vec3<f32>, t: f32) -> f32 {
     return n;
 }
 
-fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
-    let r = length(vec2<f32>(pos.x, pos.z));
-    let phi = atan2(pos.z, pos.x);
+// Result of a disk color query: emitted radiance + opacity contribution.
+// Both the volumetric and flat paths return this struct so the main loop
+// can treat them uniformly.
+struct DiskSample {
+    color: vec3<f32>,
+    density: f32,
+}
 
+// Radial temperature gradient: white-hot inner → deep-orange outer.
+fn temperature_color(t: f32) -> vec3<f32> {
+    return mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
+}
+
+// Radial brightness falloff (∝ 1/r² from the inner edge).
+fn radial_falloff(r: f32, inner: f32) -> f32 {
+    return 1.0 / pow(r / inner, 2.0);
+}
+
+// Cylindrical radius in the disk plane.
+fn r_of(pos: vec3<f32>) -> f32 {
+    return length(vec2<f32>(pos.x, pos.z));
+}
+
+// Relativistic Doppler beaming. `dir` is the ray direction (disk-local).
+fn apply_doppler(col: vec3<f32>, pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    let phi = atan2(pos.z, pos.x);
+    let v_orbital = sqrt(uniforms.rs / (2.0 * r_of(pos)));
+    let tangent = normalize(vec3<f32>(-sin(phi), 0.0, cos(phi)));
+    let vdotn = dot(tangent * v_orbital, -dir);
+    let gamma = 1.0 / sqrt(max(1.0 - v_orbital * v_orbital, 1e-4));
+    if (uniforms.doppler_enabled == 0u) {
+        return col;
+    }
+    let delta = 1.0 / (gamma * (1.0 - vdotn));
+    let doppler = pow(delta, 3.0) * uniforms.doppler_strength;
+    return col * doppler;
+}
+
+// Off-tier fallback: zero-thickness disk, single sample, fixed alpha.
+// Preserves the exact pre-volumetric appearance. Returns DiskSample so the
+// main loop dispatches both paths uniformly.
+fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
+    let r = r_of(pos);
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
     // Domain-warped FBM for feathered/smoky gas texture. The Keplerian shear
     // (rot ∝ 1/r^1.5) is folded into the noise flow term so inner radii flow
@@ -263,24 +302,18 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
     let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
-    let tcol = mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
+    let tcol = temperature_color(t);
+    let falloff = radial_falloff(r, uniforms.disk_inner);
 
-    let falloff = 1.0 / pow(r / uniforms.disk_inner, 2.0);
+    var col = tcol * (0.6 + 0.4 * noise) * falloff * uniforms.disk_brightness;
+    col = apply_doppler(col, pos, dir);
 
-    var col = tcol * (0.6 + 0.4 * noise) * falloff;
+    return DiskSample(vec3<f32>(col), 0.85);
+}
 
-    let v_orbital = sqrt(uniforms.rs / (2.0 * r));
-    let tangent = normalize(vec3<f32>(-sin(phi), 0.0, cos(phi)));
-    let vdotn = dot(tangent * v_orbital, -dir);
-    let gamma = 1.0 / sqrt(max(1.0 - v_orbital * v_orbital, 1e-4));
-    var doppler = 1.0;
-    if (uniforms.doppler_enabled != 0u) {
-        let delta = 1.0 / (gamma * (1.0 - vdotn));
-        doppler = pow(delta, 3.0) * uniforms.doppler_strength;
-    }
-    col *= doppler;
-
-    return col * uniforms.disk_brightness;
+// TEMPORARY shim — removed in Task 7 when the main loop is restructured.
+fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    return disk_color_flat(pos, dir).color;
 }
 
 // --- planets ---
