@@ -21,6 +21,31 @@ impl BloomQuality {
     }
 }
 
+/// Disk volumetric rendering quality. Gates noise octave counts.
+#[allow(dead_code)] // consumed starting Task 7 (tier dispatch) + Task 8 (egui)
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum DiskQuality {
+    Off,     // flat zero-thickness fallback (current appearance)
+    Low,     // 3/2/2 octaves — web default
+    Medium,  // 4/3/3 octaves
+    #[default]
+    High,    // 5/4/3 octaves — desktop default
+}
+
+impl DiskQuality {
+    /// Returns (filament_octaves, density_octaves, warp_octaves).
+    /// Off returns zeros; the shader dispatches to the flat path instead.
+    #[allow(dead_code)] // read in Task 7's tier dispatch
+    pub fn octaves(self) -> (u32, u32, u32) {
+        match self {
+            DiskQuality::Off => (0, 0, 0),
+            DiskQuality::Low => (3, 2, 2),
+            DiskQuality::Medium => (4, 3, 3),
+            DiskQuality::High => (5, 4, 3),
+        }
+    }
+}
+
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
@@ -54,6 +79,16 @@ pub struct BlackHoleParams {
     pub bloom_strength: f32,
     pub exposure: f32,
     pub bloom_quality: BloomQuality,
+    // Disk turbulence (Phase 3.1: volumetric disk)
+    pub disk_half_thickness: f32,
+    pub filament_freq: f32,
+    pub filament_sharpness: f32,
+    pub density_freq: f32,
+    pub density_strength: f32,
+    pub arm_count: f32,
+    pub arm_tightness: f32,
+    pub arm_strength: f32,
+    pub disk_quality: DiskQuality,
 }
 
 impl Default for BlackHoleParams {
@@ -80,6 +115,15 @@ impl Default for BlackHoleParams {
             bloom_strength: 0.8,
             exposure: 1.0,
             bloom_quality: if cfg!(target_arch = "wasm32") { BloomQuality::Low } else { BloomQuality::High },
+            disk_half_thickness: if cfg!(target_arch = "wasm32") { 0.2 } else { 0.3 },
+            filament_freq: 1.0,
+            filament_sharpness: 2.0,
+            density_freq: 0.8,
+            density_strength: 1.0,
+            arm_count: 2.0,
+            arm_tightness: 2.0,
+            arm_strength: 0.5,
+            disk_quality: if cfg!(target_arch = "wasm32") { DiskQuality::Low } else { DiskQuality::High },
         }
     }
 }
