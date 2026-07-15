@@ -67,6 +67,12 @@
       "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
       "computedHash": "8bf292143ca93b00276a0de0fc5f84f2381f4690c5b0d32e99fa283a072f392f"
     },
+    "optimizing-rust-performance": {
+      "source": "DefectingCat/optimizing-rust-performance",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "96bf0221d116e617055f5dc038bb33d92dd61b7808d804f92da78d32c01e6934"
+    },
     "prototype": {
       "source": "mattpocock/skills",
       "sourceType": "github",
