@@ -35,6 +35,19 @@ pub fn ui_system(
                         ui.add(egui::Slider::new(&mut params.disk_tilt, 0.0..=std::f32::consts::PI).text("Tilt"));
                         ui.add(egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).text("Brightness"));
                         ui.add(egui::Slider::new(&mut params.disk_rotation_speed, 0.0..=3.0).text("Rotation speed"));
+                        use crate::params::DiskColorMode;
+                        let mut cm = params.disk_color_mode;
+                        egui::ComboBox::from_label("Color model")
+                            .selected_text(format!("{:?}", cm))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut cm, DiskColorMode::Gradient, "Gradient");
+                                ui.selectable_value(&mut cm, DiskColorMode::Blackbody, "Blackbody");
+                            });
+                        params.disk_color_mode = cm;
+                        ui.add_enabled(
+                            cm == DiskColorMode::Blackbody,
+                            egui::Slider::new(&mut params.disk_temp, 1000.0..=50000.0).text("Temperature (K)"),
+                        );
                     });
                 egui::CollapsingHeader::new("Disk Turbulence")
                     .default_open(true)
@@ -63,6 +76,10 @@ pub fn ui_system(
                 egui::CollapsingHeader::new("Doppler").show(ui, |ui| {
                     ui.checkbox(&mut params.doppler_enabled, "Enabled");
                     ui.add_enabled(params.doppler_enabled, egui::Slider::new(&mut params.doppler_strength, 0.0..=3.0).text("Strength"));
+                });
+                egui::CollapsingHeader::new("Jets").show(ui, |ui| {
+                    ui.checkbox(&mut params.jets_enabled, "Enabled");
+                    ui.add_enabled(params.jets_enabled, egui::Slider::new(&mut params.jets_strength, 0.0..=3.0).text("Strength"));
                 });
                 egui::CollapsingHeader::new("Renderer").show(ui, |ui| {
                     ui.add(egui::Slider::new(&mut params.steps, 50..=600).text("Steps"));

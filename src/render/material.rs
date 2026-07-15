@@ -53,6 +53,11 @@ pub struct BlackHoleUniforms {
     pub arm_tightness: f32,
     pub arm_strength: f32,
     pub disk_quality: u32,
+    // Disk color mode + blackbody temp, relativistic jets.
+    pub disk_color_mode: u32,   // 0=gradient, 1=blackbody
+    pub disk_temp: f32,         // blackbody base temperature (Kelvin)
+    pub jets_enabled: u32,
+    pub jets_strength: f32,
 }
 
 impl Default for BlackHoleUniforms {
@@ -98,6 +103,10 @@ impl Default for BlackHoleUniforms {
             arm_tightness: 2.0,
             arm_strength: 0.5,
             disk_quality: 3, // High
+            disk_color_mode: 0, // Gradient (preserves prior appearance)
+            disk_temp: 10000.0,
+            jets_enabled: 1,
+            jets_strength: 1.0,
         }
     }
 }

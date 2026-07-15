@@ -56,6 +56,26 @@ impl DiskQuality {
     }
 }
 
+/// Accretion disk color model. Gradient = the hand-tuned white-hot → orange
+/// ramp with Newtonian Doppler; Blackbody = Tanner-Helland color keyed to a
+/// Novikov-Thorne temperature profile shifted by the Kerr 4-velocity Doppler
+/// factor, so the approaching side turns hotter/bluer.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum DiskColorMode {
+    #[default]
+    Gradient,  // mode 0: existing appearance
+    Blackbody, // mode 1: analytic blackbody + Kerr δ
+}
+
+impl DiskColorMode {
+    pub fn as_u32(self) -> u32 {
+        match self {
+            DiskColorMode::Gradient => 0,
+            DiskColorMode::Blackbody => 1,
+        }
+    }
+}
+
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
@@ -99,6 +119,11 @@ pub struct BlackHoleParams {
     pub arm_tightness: f32,
     pub arm_strength: f32,
     pub disk_quality: DiskQuality,
+    // Disk color model + blackbody temp (Phase 3.2), relativistic jets.
+    pub disk_color_mode: DiskColorMode,
+    pub disk_temp: f32,
+    pub jets_enabled: bool,
+    pub jets_strength: f32,
 }
 
 impl Default for BlackHoleParams {
@@ -134,6 +159,10 @@ impl Default for BlackHoleParams {
             arm_tightness: 2.0,
             arm_strength: 0.5,
             disk_quality: if cfg!(target_arch = "wasm32") { DiskQuality::Low } else { DiskQuality::High },
+            disk_color_mode: DiskColorMode::Gradient, // keep prior look as the default
+            disk_temp: 10000.0,
+            jets_enabled: true,
+            jets_strength: 1.0,
         }
     }
 }

@@ -48,6 +48,11 @@ struct BlackHoleUniforms {
     arm_tightness: f32,
     arm_strength: f32,
     disk_quality: u32,
+    // Disk color mode + blackbody temp (Phase 3.2), relativistic jets.
+    disk_color_mode: u32,   // 0=gradient, 1=blackbody
+    disk_temp: f32,         // blackbody base temperature (Kelvin)
+    jets_enabled: u32,      // 0=off, 1=on
+    jets_strength: f32,     // jet brightness multiplier
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
@@ -270,6 +275,32 @@ fn temperature_color(t: f32) -> vec3<f32> {
     return mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
 }
 
+// Analytic blackbody color (Tanner-Helland / Mitchell Charity approximation).
+// Input temp in Kelvin; output linear RGB. Ported from the others/ GLSL shader.
+fn blackbody(temp: f32) -> vec3f {
+    // Clamp to prevent log(0) at the event horizon (infinite redshift).
+    let t = max(temp, 1.0) / 100.0;
+    var r: f32;
+    var g: f32;
+    var b: f32;
+    if (t <= 66.0) {
+        r = 255.0;
+        g = 99.4708025861 * log(t) - 161.1195681661;
+        if (t <= 19.0) {
+            b = 0.0;
+        } else {
+            b = 138.5177312231 * log(t - 10.0) - 305.0447927307;
+        }
+    } else {
+        r = 329.698727446 * pow(t - 60.0, -0.1332047592);
+        g = 288.1221695283 * pow(t - 60.0, -0.0755148492);
+        b = 255.0;
+    }
+    // Formula produces sRGB; convert to linear for the HDR pipeline.
+    let srgb = vec3f(r, g, b) / 255.0;
+    return pow(max(srgb, vec3f(0.0)), vec3f(2.2));
+}
+
 // Radial brightness falloff (∝ 1/r² from the inner edge).
 fn radial_falloff(r: f32, inner: f32) -> f32 {
     return 1.0 / pow(r / inner, 2.0);
@@ -295,6 +326,56 @@ fn apply_doppler(col: vec3<f32>, pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     return col * doppler;
 }
 
+// Kerr equatorial 4-velocity Doppler factor δ = E_obs/E_em (Page & Thorne 1974).
+// Exact: solves g_μν u^μ u^ν = -1 for circular equatorial orbits, then folds in
+// the conserved photon angular momentum. Returns vec2(delta, beaming=δ^3.5).
+// Used by the blackbody disk color mode; the floor guards against NaN from
+// pow of a negative base.
+fn kerr_doppler(pos: vec3f, dir: vec3f) -> vec2f {
+    let r = r_of(pos);
+    let m = 0.5;
+    let a = uniforms.spin * m;
+    let sqrt_m = sqrt(m);
+    let sign_spin = sign(uniforms.spin + 1.0e-8);
+    // 1. Keplerian angular velocity Ω = dφ/dt.
+    let omega = (sign_spin * sqrt_m) / (r * sqrt(r) + a * sqrt_m);
+    // 2. Equatorial metric components (θ = π/2).
+    let g_tt = -(1.0 - 2.0 * m / r);
+    let g_tphi = -2.0 * m * a / r;
+    let g_phiphi = r * r + a * a + 2.0 * m * a * a / r;
+    // 3. Time component of the circular-orbit 4-velocity.
+    let u_t_sq = -(g_tt + 2.0 * omega * g_tphi + omega * omega * g_phiphi);
+    let u_t = 1.0 / sqrt(max(1.0e-6, u_t_sq));
+    // 4. Conserved photon angular momentum (impact-parameter mapping).
+    let l_photon = pos.z * dir.x - pos.x * dir.z;
+    // 5. δ = E_obs/E_em = 1 / (u_t · (1 − Ω · L_photon)).
+    let delta = 1.0 / max(0.01, u_t * (1.0 - omega * l_photon));
+    let beaming = max(0.01, pow(delta, 3.5));
+    return vec2f(delta, beaming);
+}
+
+// Unifies the color assembly for both disk paths. Mode 0 = existing gradient +
+// Newtonian apply_doppler (preserves the pre-blackbody appearance). Mode 1 =
+// Novikov-Thorne radial temperature gradient × Kerr δ → blackbody color × δ^3.5
+// beaming, so the approaching side shifts hotter/bluer and the receding side
+// cooler/redder — the physical signature absent from the gradient mode.
+fn disk_emission(r: f32, pos: vec3f, dir: vec3f, brightness: f32) -> vec3f {
+    let inner = uniforms.disk_inner;
+    let t = (r - inner) / (uniforms.disk_outer - inner);
+    let falloff = radial_falloff(r, inner);
+    if (uniforms.disk_color_mode == 0u) {
+        var col = temperature_color(t) * brightness * falloff * uniforms.disk_brightness;
+        return apply_doppler(col, pos, dir);
+    }
+    // Blackbody mode: NT radial temperature profile × Kerr Doppler shift.
+    let isco_r = clamp(inner / r, 0.0, 1.0);
+    let nt_factor = max(0.0, 1.0 - sqrt(isco_r));
+    let radial_temp = pow(isco_r, 0.75) * pow(nt_factor, 0.25);
+    let d = kerr_doppler(pos, dir);
+    let temperature = uniforms.disk_temp * radial_temp * d.x;
+    return blackbody(temperature) * d.y * brightness * falloff * uniforms.disk_brightness;
+}
+
 // Off-tier fallback: zero-thickness disk, single sample, fixed alpha.
 // Preserves the exact pre-volumetric appearance. Returns DiskSample so the
 // main loop dispatches both paths uniformly.
@@ -306,12 +387,7 @@ fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     // faster than outer — correct differential rotation.
     let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
-    let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
-    let tcol = temperature_color(t);
-    let falloff = radial_falloff(r, uniforms.disk_inner);
-
-    var col = tcol * (0.6 + 0.4 * noise) * falloff * uniforms.disk_brightness;
-    col = apply_doppler(col, pos, dir);
+    let col = disk_emission(r, pos, dir, 0.6 + 0.4 * noise);
 
     return DiskSample(vec3<f32>(col), 0.85);
 }
@@ -358,14 +434,54 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let total_density = base_density * arm_mod;
     let brightness = 0.5 + filament;
 
-    let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
-    let tcol = temperature_color(t);
-    let falloff = radial_falloff(r, uniforms.disk_inner);
-
-    var col = tcol * brightness * falloff * uniforms.disk_brightness;
-    col = apply_doppler(col, pos, dir);
+    let col = disk_emission(r, pos, dir, brightness);
 
     return DiskSample(vec3<f32>(col), total_density);
+}
+
+// Relativistic jets along the spin axis (Y). Bipolar cones above/below the
+// disk with 0.92c outflow beaming. Ported from others/' sample_relativistic_jets:
+// Gaussian radial falloff, exponential length decay, outward-flowing noise,
+// δ^3.5 beaming (no floor needed — β=0.92 keeps the denominator positive).
+// Front-to-back composited into the same accumulators as the disk.
+fn sample_jets(pos: vec3f, dir: vec3f, r_plus: f32, dt: f32,
+               accum_color: ptr<function, vec3f>, accum_alpha: ptr<function, f32>) {
+    let jet_v = abs(pos.y);
+    let jet_max_h = 80.0;
+    if (jet_v <= r_plus * 1.8 || jet_v >= jet_max_h) {
+        return;
+    }
+    let jet_r = length(vec2f(pos.x, pos.z));
+    let jet_width = 1.0 + jet_v * 0.15;
+    if (jet_r >= jet_width * 2.0) {
+        return;
+    }
+    let radial_falloff = exp(-(jet_r * jet_r) / (jet_width * 0.5));
+    let length_falloff = exp(-jet_v * 0.05);
+
+    // Outward-flowing turbulence: the y term reverses sign of the time flow so
+    // the lower jet streams downward and the upper jet upward.
+    let flow = pos.y * 2.0 - uniforms.time * 8.0;
+    let uv_jet = vec3f(pos.x, flow, pos.z);
+    let noise_val = value_noise3(uv_jet * 0.5) * 0.6 + value_noise3(uv_jet * 1.5) * 0.4;
+    let jet_density = radial_falloff * length_falloff * max(0.0, noise_val - 0.2);
+
+    if (jet_density <= 0.001) {
+        return;
+    }
+    // 0.92c outflow beaming.
+    let jet_vel = 0.92 * sign(pos.y);
+    let jet_vel_vec = vec3f(0.0, jet_vel, 0.0);
+    let cos_theta = dot(normalize(jet_vel_vec), -dir);
+    let beta = abs(jet_vel);
+    let gamma = 1.0 / sqrt(1.0 - beta * beta);
+    let delta = 1.0 / (gamma * (1.0 - beta * cos_theta));
+    let beaming = pow(delta, 3.5);
+
+    let base_color = vec3f(0.4, 0.7, 1.0);
+    let emission = base_color * jet_density * 0.05 * beaming * uniforms.jets_strength * dt;
+    *accum_color += emission * (1.0 - *accum_alpha);
+    *accum_alpha += jet_density * 0.05 * uniforms.jets_strength * dt;
 }
 
 // --- planets ---
@@ -604,6 +720,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                     accum_alpha += (1.0 - accum_alpha) * s.density * seg_len;
                 }
             }
+            if (accum_alpha > 0.99) { break; }
+        }
+
+        // --- relativistic jets (along the spin axis) ---
+        if (uniforms.jets_enabled != 0u) {
+            sample_jets(new_pos, new_dir, r_plus, dt, &accum_color, &accum_alpha);
             if (accum_alpha > 0.99) { break; }
         }
 

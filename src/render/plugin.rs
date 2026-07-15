@@ -629,6 +629,10 @@ fn mirror_params(
         u.arm_tightness = params.arm_tightness;
         u.arm_strength = params.arm_strength;
         u.disk_quality = params.disk_quality.as_u32();
+        u.disk_color_mode = params.disk_color_mode.as_u32();
+        u.disk_temp = params.disk_temp;
+        u.jets_enabled = params.jets_enabled as u32;
+        u.jets_strength = params.jets_strength;
     }
     // Update brightpass threshold (live-tunable).
     for (_, mat) in brightpass_materials.iter_mut() {
