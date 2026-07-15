@@ -311,11 +311,6 @@ fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     return DiskSample(vec3<f32>(col), 0.85);
 }
 
-// TEMPORARY shim — removed in Task 7 when the main loop is restructured.
-fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
-    return disk_color_flat(pos, dir).color;
-}
-
 // Volumetric disk color: ridged filaments drive brightness, a smoothstep-
 // gated FBM drives density clumping, and a logarithmic-spiral term (riding
 // the Keplerian shear `rot`) drives large-scale arm structure. The three
@@ -553,13 +548,41 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
 
-        if (disk_hit(prev, new_pos)) {
-            let ty = prev.y / (prev.y - new_pos.y);
-            let hit = mix(prev, new_pos, vec3<f32>(ty));
-            let dc = disk_color(hit, new_dir);
-            let a = 0.85;
-            accum_color += (1.0 - accum_alpha) * dc * a;
-            accum_alpha += (1.0 - accum_alpha) * a;
+        // --- volumetric disk ---
+        if (uniforms.disk_quality == 0u) {
+            // Off tier: zero-thickness single midplane sample, fixed alpha.
+            if (disk_hit(prev, new_pos)) {
+                let ty = prev.y / (prev.y - new_pos.y);
+                let hit = mix(prev, new_pos, vec3<f32>(ty));
+                let s = disk_color_flat(hit, new_dir);
+                accum_color += (1.0 - accum_alpha) * s.color * s.density;
+                accum_alpha += (1.0 - accum_alpha) * s.density;
+                if (accum_alpha > 0.99) { break; }
+            }
+        } else {
+            // Volumetric tier.
+            // (A) In-slab per-step sampling: if this step ends inside the
+            // thickness slab, accumulate emission × arc length. Reuses the
+            // RK45 adaptive step — dense where light bends, sparse where straight.
+            let slab_r = r_of(new_pos);
+            if (abs(new_pos.y) < uniforms.disk_half_thickness
+                && slab_r >= uniforms.disk_inner
+                && slab_r <= uniforms.disk_outer) {
+                let s = disk_color_volumetric(new_pos, new_dir);
+                let step_len = length(new_pos - prev);
+                accum_color += (1.0 - accum_alpha) * s.color * s.density * step_len;
+                accum_alpha += (1.0 - accum_alpha) * s.density * step_len;
+            }
+            // (B) Midplane edge-capture: if a step straddles y=0, add one
+            // precise at-plane sample weighted by the slab depth along the ray.
+            if (disk_hit(prev, new_pos)) {
+                let ty = prev.y / (prev.y - new_pos.y);
+                let hit = mix(prev, new_pos, vec3<f32>(ty));
+                let s = disk_color_volumetric(hit, new_dir);
+                let thickness_proj = uniforms.disk_half_thickness / max(abs(new_dir.y), 1e-3);
+                accum_color += (1.0 - accum_alpha) * s.color * s.density * thickness_proj;
+                accum_alpha += (1.0 - accum_alpha) * s.density * thickness_proj;
+            }
             if (accum_alpha > 0.99) { break; }
         }
 
