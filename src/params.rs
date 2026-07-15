@@ -145,7 +145,7 @@ impl Default for BlackHoleParams {
             skybox_intensity: 0.0, // procedural stars only by default
             planet_count: 0,
             spin: 0.0,
-            star_aa: if cfg!(target_arch = "wasm32") { false } else { true },
+            star_aa: !cfg!(target_arch = "wasm32"),
             bloom_threshold: 1.0,
             bloom_strength: 0.8,
             exposure: 1.0,

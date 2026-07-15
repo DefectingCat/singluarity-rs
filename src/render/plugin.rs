@@ -419,7 +419,7 @@ fn spawn_bloom_pipeline(
 
 /// Recreate the offscreen Image and rescale both quads on window resize,
 /// honoring the live `render_scale` param.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn resize_offscreen(
     mut images: ResMut<Assets<Image>>,
     params: Res<crate::params::BlackHoleParams>,
