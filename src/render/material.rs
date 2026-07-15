@@ -43,6 +43,16 @@ pub struct BlackHoleUniforms {
     pub bloom_strength: f32,
     pub exposure: f32,
     pub _pad5: f32,
+    // Disk volumetric (Phase 3.1)
+    pub disk_half_thickness: f32,
+    pub filament_freq: f32,
+    pub filament_sharpness: f32,
+    pub density_freq: f32,
+    pub density_strength: f32,
+    pub arm_count: f32,
+    pub arm_tightness: f32,
+    pub arm_strength: f32,
+    pub disk_quality: u32,
 }
 
 impl Default for BlackHoleUniforms {
@@ -79,6 +89,15 @@ impl Default for BlackHoleUniforms {
             bloom_strength: 0.8,
             exposure: 1.0,
             _pad5: 0.0,
+            disk_half_thickness: 0.3,
+            filament_freq: 1.0,
+            filament_sharpness: 2.0,
+            density_freq: 0.8,
+            density_strength: 1.0,
+            arm_count: 2.0,
+            arm_tightness: 2.0,
+            arm_strength: 0.5,
+            disk_quality: 3, // High
         }
     }
 }

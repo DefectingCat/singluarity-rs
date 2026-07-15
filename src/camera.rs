@@ -16,11 +16,12 @@ pub struct OrbitCamera {
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
-            yaw: 0.0,
-            // ~0.7 rad (40°) is a comfortable 3/4 view of the disk. The basis()
-            // no longer has a gimbal pole, so any pitch is safe; this is just a
-            // nice default angle, not a pole-avoidance choice.
-            pitch: 0.7,
+            yaw: -1.065,
+            // ~0.335 rad (19°) below the disk plane. The lensed far side of the
+            // disk then arcs over the top of the shadow — the iconic framing. The
+            // basis() has no gimbal pole, so any pitch is safe; this is just a nice
+            // default angle, not a pole-avoidance choice.
+            pitch: -0.335,
             distance: 30.0,
             fov: 1.0,         // radians
         }

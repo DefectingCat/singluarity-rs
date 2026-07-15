@@ -39,6 +39,15 @@ struct BlackHoleUniforms {
     bloom_strength: f32,
     exposure: f32,
     _pad5: f32,
+    disk_half_thickness: f32,
+    filament_freq: f32,
+    filament_sharpness: f32,
+    density_freq: f32,
+    density_strength: f32,
+    arm_count: f32,
+    arm_tightness: f32,
+    arm_strength: f32,
+    disk_quality: u32,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
@@ -206,11 +215,36 @@ fn value_noise3(p: vec3<f32>) -> f32 {
 }
 
 fn fbm3(p: vec3<f32>, octaves: u32) -> f32 {
+    // MAX_OCTAVES-with-break: the conservative WebGPU form for a runtime-
+    // chosen octave count. Older drivers can miscompile non-constant loop
+    // bounds; this branch is the first to pass dynamic octaves here.
+    const MAX_OCTAVES = 6u;
     var sum = 0.0;
     var amp = 0.5;
     var freq = 1.0;
-    for (var i: u32 = 0u; i < octaves; i = i + 1u) {
+    for (var i: u32 = 0u; i < MAX_OCTAVES; i = i + 1u) {
+        if (i >= octaves) { break; }
         sum = sum + amp * value_noise3(p * freq);
+        freq = freq * 2.0;
+        amp = amp * 0.5;
+    }
+    return sum;
+}
+
+// Ridged multifractal noise: 1 - |2n-1| turns value-noise gradients into
+// sharp ridges (peak where n=0.5, zero at n=0 and n=1). Raising to
+// `sharpness` thins the ridges into filaments. MAX_OCTAVES-with-break is
+// the conservative WebGPU form for a runtime-chosen octave count.
+fn ridged_fbm(p: vec3<f32>, octaves: u32, sharpness: f32) -> f32 {
+    const MAX_OCTAVES = 6u;
+    var sum = 0.0;
+    var amp = 0.5;
+    var freq = 1.0;
+    for (var i: u32 = 0u; i < MAX_OCTAVES; i = i + 1u) {
+        if (i >= octaves) { break; }
+        let n = value_noise3(p * freq);
+        let ridge = 1.0 - abs(2.0 * n - 1.0);
+        sum = sum + amp * pow(ridge, sharpness);
         freq = freq * 2.0;
         amp = amp * 0.5;
     }
@@ -223,10 +257,49 @@ fn disk_noise(pos: vec3<f32>, t: f32) -> f32 {
     return n;
 }
 
-fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
-    let r = length(vec2<f32>(pos.x, pos.z));
-    let phi = atan2(pos.z, pos.x);
+// Result of a disk color query: emitted radiance + opacity contribution.
+// Both the volumetric and flat paths return this struct so the main loop
+// can treat them uniformly.
+struct DiskSample {
+    color: vec3<f32>,
+    density: f32,
+}
 
+// Radial temperature gradient: white-hot inner → deep-orange outer.
+fn temperature_color(t: f32) -> vec3<f32> {
+    return mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
+}
+
+// Radial brightness falloff (∝ 1/r² from the inner edge).
+fn radial_falloff(r: f32, inner: f32) -> f32 {
+    return 1.0 / pow(r / inner, 2.0);
+}
+
+// Cylindrical radius in the disk plane.
+fn r_of(pos: vec3<f32>) -> f32 {
+    return length(vec2<f32>(pos.x, pos.z));
+}
+
+// Relativistic Doppler beaming. `dir` is the ray direction (disk-local).
+fn apply_doppler(col: vec3<f32>, pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    let phi = atan2(pos.z, pos.x);
+    let v_orbital = sqrt(uniforms.rs / (2.0 * r_of(pos)));
+    let tangent = normalize(vec3<f32>(-sin(phi), 0.0, cos(phi)));
+    let vdotn = dot(tangent * v_orbital, -dir);
+    let gamma = 1.0 / sqrt(max(1.0 - v_orbital * v_orbital, 1e-4));
+    if (uniforms.doppler_enabled == 0u) {
+        return col;
+    }
+    let delta = 1.0 / (gamma * (1.0 - vdotn));
+    let doppler = pow(delta, 3.0) * uniforms.doppler_strength;
+    return col * doppler;
+}
+
+// Off-tier fallback: zero-thickness disk, single sample, fixed alpha.
+// Preserves the exact pre-volumetric appearance. Returns DiskSample so the
+// main loop dispatches both paths uniformly.
+fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
+    let r = r_of(pos);
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
     // Domain-warped FBM for feathered/smoky gas texture. The Keplerian shear
     // (rot ∝ 1/r^1.5) is folded into the noise flow term so inner radii flow
@@ -234,24 +307,65 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
     let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
-    let tcol = mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(1.0, 0.45, 0.12), clamp(t, 0.0, 1.0));
+    let tcol = temperature_color(t);
+    let falloff = radial_falloff(r, uniforms.disk_inner);
 
-    let falloff = 1.0 / pow(r / uniforms.disk_inner, 2.0);
+    var col = tcol * (0.6 + 0.4 * noise) * falloff * uniforms.disk_brightness;
+    col = apply_doppler(col, pos, dir);
 
-    var col = tcol * (0.6 + 0.4 * noise) * falloff;
+    return DiskSample(vec3<f32>(col), 0.85);
+}
 
-    let v_orbital = sqrt(uniforms.rs / (2.0 * r));
-    let tangent = normalize(vec3<f32>(-sin(phi), 0.0, cos(phi)));
-    let vdotn = dot(tangent * v_orbital, -dir);
-    let gamma = 1.0 / sqrt(max(1.0 - v_orbital * v_orbital, 1e-4));
-    var doppler = 1.0;
-    if (uniforms.doppler_enabled != 0u) {
-        let delta = 1.0 / (gamma * (1.0 - vdotn));
-        doppler = pow(delta, 3.0) * uniforms.doppler_strength;
-    }
-    col *= doppler;
+// Volumetric disk color. Noise is sampled in POLAR coordinates (r_norm,
+// phi·freq, height) so turbulence flows tangentially — the correct pattern
+// for a rotating fluid. Three layers multiply: ridged filaments (brightness),
+// soft density clumping, logarithmic-spiral arms advected by Keplerian shear.
+fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
+    let r = r_of(pos);
+    let phi = atan2(pos.z, pos.x);
+    let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
 
-    return col * uniforms.disk_brightness;
+    // Octave triplet from the quality tier.
+    let q = uniforms.disk_quality;
+    var filament_octaves = 5u; var density_octaves = 4u; var warp_octaves = 3u;
+    if (q == 1u) { filament_octaves = 3u; density_octaves = 2u; warp_octaves = 2u; }
+    else if (q == 2u) { filament_octaves = 4u; density_octaves = 3u; warp_octaves = 3u; }
+    // q == 3u keeps the High defaults above; q == 0u is never passed here.
+
+    // Polar sample coordinate: (r normalized, angle × freq + Keplerian flow,
+    // height within slab). The flow term advects the noise so inner radii
+    // (faster rotation) drift ahead of outer radii — differential rotation.
+    let r_norm = r / uniforms.disk_inner;
+    let h = pos.y / max(uniforms.disk_half_thickness, 1e-3);
+    let sp = vec3<f32>(r_norm, phi * 2.5 + rot, h);
+
+    // Domain warp in polar space: distorts sample coords so filaments bend.
+    let warp = fbm3(sp * 0.8, warp_octaves);
+
+    // Layer 1: ridged bright filaments (polar-sampled → tangential streaks).
+    let filament = ridged_fbm(sp * uniforms.filament_freq + warp * 1.5,
+                              filament_octaves, uniforms.filament_sharpness);
+
+    // Layer 2: density clumping (soft ramp, no hard cut → avoids patchiness).
+    let density_noise = fbm3(sp * uniforms.density_freq + warp, density_octaves);
+    let base_density = (0.35 + 0.65 * density_noise) * uniforms.density_strength;
+
+    // Layer 3: logarithmic-spiral arm modulation, advected by Keplerian shear.
+    let arm_phase = phi * uniforms.arm_count + log(max(r, 0.1)) * uniforms.arm_tightness - rot;
+    let arm = 0.5 + 0.5 * cos(arm_phase);
+    let arm_mod = mix(1.0, pow(arm, 2.0), uniforms.arm_strength);
+
+    let total_density = base_density * arm_mod;
+    let brightness = 0.5 + filament;
+
+    let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
+    let tcol = temperature_color(t);
+    let falloff = radial_falloff(r, uniforms.disk_inner);
+
+    var col = tcol * brightness * falloff * uniforms.disk_brightness;
+    col = apply_doppler(col, pos, dir);
+
+    return DiskSample(vec3<f32>(col), total_density);
 }
 
 // --- planets ---
@@ -444,13 +558,52 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
 
-        if (disk_hit(prev, new_pos)) {
-            let ty = prev.y / (prev.y - new_pos.y);
-            let hit = mix(prev, new_pos, vec3<f32>(ty));
-            let dc = disk_color(hit, new_dir);
-            let a = 0.85;
-            accum_color += (1.0 - accum_alpha) * dc * a;
-            accum_alpha += (1.0 - accum_alpha) * a;
+        // --- volumetric disk ---
+        if (uniforms.disk_quality == 0u) {
+            // Off tier: zero-thickness single midplane sample, fixed alpha.
+            if (disk_hit(prev, new_pos)) {
+                let ty = prev.y / (prev.y - new_pos.y);
+                let hit = mix(prev, new_pos, vec3<f32>(ty));
+                let s = disk_color_flat(hit, new_dir);
+                accum_color += (1.0 - accum_alpha) * s.color * s.density;
+                accum_alpha += (1.0 - accum_alpha) * s.density;
+                if (accum_alpha > 0.99) { break; }
+            }
+        } else {
+            // Volumetric tier. Single unified path: clip THIS step's segment
+            // to the disk slab |y|<=half_thickness, sample once at the clipped
+            // segment's midpoint, accumulate × the in-slab segment length.
+            // The previous design used two overlapping paths (in-slab step +
+            // at-plane edge-capture) with inconsistent angle-dependent weights
+            // (step_len vs thickness_proj) that produced radial spokes.
+            let H = uniforms.disk_half_thickness;
+            let dy = new_pos.y - prev.y;
+            var seg_t0 = 0.0;
+            var seg_t1 = 1.0;
+            var has_slab_seg = false;
+            if (abs(dy) < 1e-6) {
+                // Step is parallel to the slab plane: in-slab iff prev is in-slab.
+                has_slab_seg = abs(prev.y) <= H;
+            } else {
+                // Clip the parametric line prev+t*(new_pos-prev) to |y|<=H.
+                let ta = (H - prev.y) / dy;
+                let tb = (-H - prev.y) / dy;
+                seg_t0 = clamp(min(ta, tb), 0.0, 1.0);
+                seg_t1 = clamp(max(ta, tb), 0.0, 1.0);
+                has_slab_seg = seg_t1 > seg_t0;
+            }
+
+            if (has_slab_seg) {
+                let mid_t = (seg_t0 + seg_t1) * 0.5;
+                let mid = mix(prev, new_pos, vec3<f32>(mid_t));
+                let mid_r = r_of(mid);
+                if (mid_r >= uniforms.disk_inner && mid_r <= uniforms.disk_outer) {
+                    let s = disk_color_volumetric(mid, new_dir);
+                    let seg_len = (seg_t1 - seg_t0) * length(new_pos - prev);
+                    accum_color += (1.0 - accum_alpha) * s.color * s.density * seg_len;
+                    accum_alpha += (1.0 - accum_alpha) * s.density * seg_len;
+                }
+            }
             if (accum_alpha > 0.99) { break; }
         }
 
