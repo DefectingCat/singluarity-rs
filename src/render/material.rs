@@ -123,12 +123,24 @@ impl Material2d for BlackHoleMaterial {
     }
 }
 
+/// Uniform for the bright-pass (bloom stage [2]).
+/// Must be a struct (not bare f32) so the Rust binding size matches the
+/// WGSL `BrightPassUniform` (16 bytes: threshold + 3 pads). A bare f32
+/// registers a 4-byte min_binding_size, causing a pipeline-layout mismatch.
+#[derive(Clone, ShaderType, Default)]
+pub struct BrightPassUniform {
+    pub threshold: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+}
+
 /// Extracts luminance above a threshold from the HDR offscreen into a
 /// half-res float texture (bloom stage [2]). Soft-knee, not hard cut.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct BrightPassMaterial {
     #[uniform(0)]
-    pub threshold: f32,
+    pub uniform: BrightPassUniform,
     #[texture(1)]
     #[sampler(2)]
     pub source: Handle<Image>,

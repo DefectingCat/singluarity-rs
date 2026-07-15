@@ -80,6 +80,15 @@ pub struct BloomFinalTarget(pub Handle<Image>);
 #[derive(Resource)]
 pub struct AppliedBloomQuality(pub crate::params::BloomQuality);
 
+/// Disables bevy_egui's auto-context creation so we can explicitly assign
+/// `PrimaryEguiContext` to the composite (window) camera. Without this,
+/// bevy_egui assigns to the first spawned camera — the offscreen camera,
+/// which renders to an Rgba16Float Image that egui's Rgba8UnormSrgb pipeline
+/// can't render into.
+fn disable_egui_auto_context(mut settings: ResMut<bevy_egui::EguiGlobalSettings>) {
+    settings.auto_create_primary_context = false;
+}
+
 pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
@@ -92,6 +101,14 @@ impl Plugin for BlackHolePlugin {
             .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
+            // The bloom pipeline spawns 7 Camera2d entities (offscreen + brightpass
+            // + 4 blur + composite). bevy_egui's auto-context assigns PrimaryEguiContext
+            // to the FIRST Added<Camera> — the offscreen camera, which renders to an
+            // Rgba16Float Image. egui's pipeline expects the window's Rgba8UnormSrgb
+            // surface → format mismatch crash. Disable auto-assignment and explicitly
+            // tag the composite (window) camera with PrimaryEguiContext (see spawn).
+            // Runs in PreStartup, before setup_primary_egui_context_system.
+            .add_systems(bevy::prelude::PreStartup, disable_egui_auto_context)
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_default_planet)
             .add_systems(
@@ -238,7 +255,10 @@ fn spawn_fullscreen_quad(
         CompositeQuad,
         RenderLayers::layer(1),
     ));
-    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, Nudgable, RenderLayers::layer(1)));
+    // The composite camera renders to the window (Rgba8UnormSrgb surface).
+    // PrimaryEguiContext tells bevy_egui to render the UI onto THIS camera,
+    // not the offscreen/bloom cameras (which render to Rgba16Float Images).
+    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, Nudgable, bevy_egui::PrimaryEguiContext, RenderLayers::layer(1)));
 }
 
 /// Spawns the bloom pipeline (brightpass + blur pyramid + bloom_final).
@@ -272,7 +292,9 @@ fn spawn_bloom_pipeline(
     commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(bp_materials.add(crate::render::material::BrightPassMaterial {
-            threshold: 1.0,
+            uniform: crate::render::material::BrightPassUniform {
+                threshold: 1.0, _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+            },
             source: offscreen.clone(),
         })),
         Transform::default().with_scale(Vec3::new(bw as f32 / 2.0, bh as f32 / 2.0, 1.0)),
@@ -601,7 +623,7 @@ fn mirror_params(
     }
     // Update brightpass threshold (live-tunable).
     for (_, mat) in brightpass_materials.iter_mut() {
-        mat.threshold = params.bloom_threshold;
+        mat.uniform.threshold = params.bloom_threshold;
     }
     // Update composite material uniforms (bloom strength + exposure live-tunable).
     for (_, mat) in composite_materials.iter_mut() {
