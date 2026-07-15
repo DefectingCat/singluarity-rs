@@ -316,6 +316,53 @@ fn disk_color(pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     return disk_color_flat(pos, dir).color;
 }
 
+// Volumetric disk color: ridged filaments drive brightness, a smoothstep-
+// gated FBM drives density clumping, and a logarithmic-spiral term (riding
+// the Keplerian shear `rot`) drives large-scale arm structure. The three
+// signals multiply — density says where matter is, filaments say how bright,
+// arms say how it's distributed.
+fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
+    let r = r_of(pos);
+    let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
+    let flow = vec3<f32>(0.0, 0.0, rot);
+
+    // Octave triplet from the quality tier.
+    let q = uniforms.disk_quality;
+    var filament_octaves = 5u; var density_octaves = 4u; var warp_octaves = 3u;
+    if (q == 1u) { filament_octaves = 3u; density_octaves = 2u; warp_octaves = 2u; }
+    else if (q == 2u) { filament_octaves = 4u; density_octaves = 3u; warp_octaves = 3u; }
+    // q == 3u keeps the High defaults above; q == 0u is never passed here.
+
+    // Domain warp: distorts sample coords so filaments curve and bend.
+    let warp = fbm3(pos * 0.8 + flow * 0.1, warp_octaves);
+
+    // Layer 1: ridged bright filaments.
+    let filament = ridged_fbm(pos * uniforms.filament_freq + warp * 1.5 + flow * 0.3,
+                              filament_octaves, uniforms.filament_sharpness);
+
+    // Layer 2: density clumping (smoothstep makes a definite gas/void boundary).
+    let density_noise = fbm3(pos * uniforms.density_freq + warp, density_octaves);
+    let base_density = smoothstep(0.3, 0.7, density_noise) * uniforms.density_strength;
+
+    // Layer 3: logarithmic-spiral arm modulation, advected by Keplerian shear.
+    let phi = atan2(pos.z, pos.x);
+    let arm_phase = phi * uniforms.arm_count + log(r) * uniforms.arm_tightness - rot;
+    let arm = 0.5 + 0.5 * cos(arm_phase);
+    let arm_mod = mix(1.0, pow(arm, 2.0), uniforms.arm_strength);
+
+    let total_density = base_density * arm_mod;
+    let brightness = filament;
+
+    let t = (r - uniforms.disk_inner) / (uniforms.disk_outer - uniforms.disk_inner);
+    let tcol = temperature_color(t);
+    let falloff = radial_falloff(r, uniforms.disk_inner);
+
+    var col = tcol * brightness * falloff * uniforms.disk_brightness;
+    col = apply_doppler(col, pos, dir);
+
+    return DiskSample(vec3<f32>(col), total_density);
+}
+
 // --- planets ---
 // `prev`/`cur` are in DISK-LOCAL space; planet centers are world space, so we
 // rotate each center into disk-local space here.
