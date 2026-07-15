@@ -316,13 +316,10 @@ fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     return DiskSample(vec3<f32>(col), 0.85);
 }
 
-// Volumetric disk color. Noise is sampled in POLAR coordinates, not the
-// raw Cartesian pos, because sampling Cartesian (x,y,z) on a disk produces
-// radial spokes: r changes move x/z a lot (high-frequency stripes) while a
-// full angular sweep revisits correlated lattice points (weak variation),
-// so stripes elongate along radius into spokes. Polar sampling (r_norm,
-// phi·freq, height) decouples the two axes and lets turbulence flow
-// tangentially — the physically correct pattern for a rotating fluid.
+// Volumetric disk color. Noise is sampled in POLAR coordinates (r_norm,
+// phi·freq, height) so turbulence flows tangentially — the correct pattern
+// for a rotating fluid. Three layers multiply: ridged filaments (brightness),
+// soft density clumping, logarithmic-spiral arms advected by Keplerian shear.
 fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let r = r_of(pos);
     let phi = atan2(pos.z, pos.x);
@@ -349,8 +346,7 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let filament = ridged_fbm(sp * uniforms.filament_freq + warp * 1.5,
                               filament_octaves, uniforms.filament_sharpness);
 
-    // Layer 2: density clumping (soft, no hard smoothstep cut → avoids
-    // a patchy/over-transparent slab).
+    // Layer 2: density clumping (soft ramp, no hard cut → avoids patchiness).
     let density_noise = fbm3(sp * uniforms.density_freq + warp, density_octaves);
     let base_density = (0.35 + 0.65 * density_noise) * uniforms.density_strength;
 
@@ -574,28 +570,39 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                 if (accum_alpha > 0.99) { break; }
             }
         } else {
-            // Volumetric tier.
-            // (A) In-slab per-step sampling: if this step ends inside the
-            // thickness slab, accumulate emission × arc length. Reuses the
-            // RK45 adaptive step — dense where light bends, sparse where straight.
-            let slab_r = r_of(new_pos);
-            if (abs(new_pos.y) < uniforms.disk_half_thickness
-                && slab_r >= uniforms.disk_inner
-                && slab_r <= uniforms.disk_outer) {
-                let s = disk_color_volumetric(new_pos, new_dir);
-                let step_len = length(new_pos - prev);
-                accum_color += (1.0 - accum_alpha) * s.color * s.density * step_len;
-                accum_alpha += (1.0 - accum_alpha) * s.density * step_len;
+            // Volumetric tier. Single unified path: clip THIS step's segment
+            // to the disk slab |y|<=half_thickness, sample once at the clipped
+            // segment's midpoint, accumulate × the in-slab segment length.
+            // The previous design used two overlapping paths (in-slab step +
+            // at-plane edge-capture) with inconsistent angle-dependent weights
+            // (step_len vs thickness_proj) that produced radial spokes.
+            let H = uniforms.disk_half_thickness;
+            let dy = new_pos.y - prev.y;
+            var seg_t0 = 0.0;
+            var seg_t1 = 1.0;
+            var has_slab_seg = false;
+            if (abs(dy) < 1e-6) {
+                // Step is parallel to the slab plane: in-slab iff prev is in-slab.
+                has_slab_seg = abs(prev.y) <= H;
+            } else {
+                // Clip the parametric line prev+t*(new_pos-prev) to |y|<=H.
+                let ta = (H - prev.y) / dy;
+                let tb = (-H - prev.y) / dy;
+                seg_t0 = clamp(min(ta, tb), 0.0, 1.0);
+                seg_t1 = clamp(max(ta, tb), 0.0, 1.0);
+                has_slab_seg = seg_t1 > seg_t0;
             }
-            // (B) Midplane edge-capture: if a step straddles y=0, add one
-            // precise at-plane sample weighted by the slab depth along the ray.
-            if (disk_hit(prev, new_pos)) {
-                let ty = prev.y / (prev.y - new_pos.y);
-                let hit = mix(prev, new_pos, vec3<f32>(ty));
-                let s = disk_color_volumetric(hit, new_dir);
-                let thickness_proj = uniforms.disk_half_thickness / max(abs(new_dir.y), 1e-3);
-                accum_color += (1.0 - accum_alpha) * s.color * s.density * thickness_proj;
-                accum_alpha += (1.0 - accum_alpha) * s.density * thickness_proj;
+
+            if (has_slab_seg) {
+                let mid_t = (seg_t0 + seg_t1) * 0.5;
+                let mid = mix(prev, new_pos, vec3<f32>(mid_t));
+                let mid_r = r_of(mid);
+                if (mid_r >= uniforms.disk_inner && mid_r <= uniforms.disk_outer) {
+                    let s = disk_color_volumetric(mid, new_dir);
+                    let seg_len = (seg_t1 - seg_t0) * length(new_pos - prev);
+                    accum_color += (1.0 - accum_alpha) * s.color * s.density * seg_len;
+                    accum_alpha += (1.0 - accum_alpha) * s.density * seg_len;
+                }
             }
             if (accum_alpha > 0.99) { break; }
         }
