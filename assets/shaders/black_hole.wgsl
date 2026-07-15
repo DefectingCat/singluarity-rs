@@ -376,80 +376,77 @@ fn disk_emission(r: f32, pos: vec3f, dir: vec3f, brightness: f32) -> vec3f {
     return blackbody(temperature) * d.y * brightness * falloff * uniforms.disk_brightness;
 }
 
-// Off-tier fallback: zero-thickness disk, single sample, fixed alpha.
-// Preserves the exact pre-volumetric appearance. Returns DiskSample so the
+// Off-tier fallback: zero-thickness disk, single midplane sample. Density is
+// driven by the same radial smoothstep falloff as the volumetric path (no flat
+// 0.85 floor) so the edges feather out naturally. Returns DiskSample so the
 // main loop dispatches both paths uniformly.
 fn disk_color_flat(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let r = r_of(pos);
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
-    // Domain-warped FBM for feathered/smoky gas texture. The Keplerian shear
+    // Domain-warped FBM for a feathered gas texture. The Keplerian shear
     // (rot ∝ 1/r^1.5) is folded into the noise flow term so inner radii flow
-    // faster than outer — correct differential rotation.
+    // faster than outer — correct differential rotation. Amplitude is kept mild
+    // so the radial temperature gradient (inside disk_emission) dominates.
     let noise = disk_noise(vec3<f32>(pos.x * 0.3, pos.z * 0.3, rot), uniforms.time);
 
-    // Contrast-boosted, mean-preserving: low floor + high peak. The Keplerian
-    // flow (the `rot` z term above) reads as moving clumps rather than a flat
-    // glow, without dimming the disk (mean ≈ old 0.6 + 0.4·n ≈ 0.8).
-    let col = disk_emission(r, pos, dir, 0.2 + 1.6 * noise * noise);
+    let col = disk_emission(r, pos, dir, 0.8 + 0.4 * noise * noise);
 
-    return DiskSample(vec3<f32>(col), 0.85);
+    // Radial smoothstep: solid through the bulk, feathered at both edges.
+    let radial = smoothstep(uniforms.disk_outer, uniforms.disk_inner, r);
+    return DiskSample(vec3<f32>(col), radial * 0.9);
 }
 
-// Volumetric disk color. Noise is sampled in POLAR coordinates (r_norm,
-// phi·freq, height) so turbulence flows tangentially — the correct pattern
-// for a rotating fluid. Three layers multiply: ridged filaments (brightness),
-// soft density clumping, logarithmic-spiral arms advected by Keplerian shear.
+// Volumetric disk color. Models the accretion disk as a physically-structured
+// density field (no flat floor): radial smoothstep falloff × Gaussian vertical
+// decay × a WEAK low-frequency turbulence modulation. The radial temperature
+// gradient inside disk_emission drives the dominant appearance (Gargantua's
+// smooth white-hot inner → deep-orange outer look); turbulence is kept to a
+// subtle ±25% texture accent so the disk reads as solid gas rather than the
+// jelly-like translucent slab the old 0.55-floor + ridged-filament model gave.
+//
+// Noise is sampled in POLAR coordinates (r_norm, phi·freq + Keplerian flow,
+// height) so what little texture there is flows tangentially — correct for a
+// rotating fluid. The Keplerian flow term (`+ rot`) advects the turbulence.
 fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     let r = r_of(pos);
     let phi = atan2(pos.z, pos.x);
     let rot = uniforms.time * uniforms.disk_rotation_speed / pow(r, 1.5);
 
-    // Octave triplet from the quality tier.
-    let q = uniforms.disk_quality;
-    var filament_octaves = 5u; var density_octaves = 4u; var warp_octaves = 3u;
-    if (q == 1u) { filament_octaves = 3u; density_octaves = 2u; warp_octaves = 2u; }
-    else if (q == 2u) { filament_octaves = 4u; density_octaves = 3u; warp_octaves = 3u; }
-    // q == 3u keeps the High defaults above; q == 0u is never passed here.
-
     // Polar sample coordinate: (r normalized, angle × freq + Keplerian flow,
     // height within slab). The flow term advects the noise so inner radii
     // (faster rotation) drift ahead of outer radii — differential rotation.
+    // NOTE: h here is normalized by disk_half_thickness, but disk_half_thickness
+    // is now an H/R RATIO (semantics changed from absolute world units), so the
+    // caller scales H = r * disk_half_thickness before sampling — see the
+    // per-step accumulation site in the main loop.
     let r_norm = r / uniforms.disk_inner;
-    let h = pos.y / max(uniforms.disk_half_thickness, 1e-3);
+    let h = pos.y / max(r * uniforms.disk_half_thickness, 1e-3);
     let sp = vec3<f32>(r_norm, phi * 2.5 + rot, h);
 
-    // Domain warp in polar space: distorts sample coords so filaments bend.
-    let warp = fbm3(sp * 0.8, warp_octaves);
+    // Weak low-frequency turbulence. Two octaves only (was 4–5): the goal is a
+    // Gargantua-style smooth disk, so turbulence is a texture accent (±25%
+    // density modulation), NOT the dominant carrier. ridged filaments and
+    // logarithmic-spiral arms were removed — they produced the noisy,
+    // jelly-like, striated look this model replaces.
+    let turbulence = fbm3(sp * uniforms.density_freq, 2u);
+    let turb_mod = mix(1.0, 0.75 + 0.5 * turbulence, 0.5);  // 0.75–1.25
 
-    // Layer 1: ridged bright filaments (polar-sampled → tangential streaks).
-    let filament = ridged_fbm(sp * uniforms.filament_freq + warp * 1.5,
-                              filament_octaves, uniforms.filament_sharpness);
+    // Gaussian vertical decay: densest at the midplane, ~0 at the slab edge.
+    // h is normalized to the slab half-height, so exp(-(h·h)·4) → 0.018 at the
+    // rim. This replaces the old uniform-in-slab density (the cause of the
+    // jelly: the whole thickness glowed at a constant floor alpha).
+    let h_falloff = exp(-(h * h) * 4.0);
 
-    // Layer 2: density. The floor is HIGH on purpose: alpha accumulates from
-    // this field, so a low floor (the earlier 0.15 + 1.5·n² form) let noise
-    // valleys drop to ~0.28 and the disk became see-through there. Keeping the
-    // floor at ~0.55 (≈ the original 0.35+0.65·n valleys) keeps the disk solid
-    // and opaque. The rotation is NOT carried by density holes — it is carried
-    // by the `brightness` filament term below, which is polar-sampled and
-    // rotates via the `+ rot` in `sp`. So: solid opacity here, moving streaks
-    // via brightness. The squaring only sharpens the mild clumping for a bit
-    // of thickness variation; it does not punch holes.
-    let density_noise = fbm3(sp * uniforms.density_freq + warp, density_octaves);
-    let clumped = density_noise * density_noise;
-    let base_density = (0.55 + 0.9 * clumped) * uniforms.density_strength;
+    // Radial smoothstep falloff (outer → 0, inner → 1): smooth inner+outer
+    // edges instead of a hard annulus, matching the others/ reference disk.ts.
+    let radial = smoothstep(uniforms.disk_outer, uniforms.disk_inner, r);
 
-    // Layer 3: logarithmic-spiral arm modulation, advected by Keplerian shear.
-    let arm_phase = phi * uniforms.arm_count + log(max(r, 0.1)) * uniforms.arm_tightness - rot;
-    let arm = 0.5 + 0.5 * cos(arm_phase);
-    let arm_mod = mix(1.0, pow(arm, 2.0), uniforms.arm_strength);
+    let total_density = radial * h_falloff * turb_mod * uniforms.density_strength;
 
-    let total_density = base_density * arm_mod;
-    // Filament (ridged) brightness — the PRIMARY carrier of visible rotation.
-    // Polar-sampled (via `sp`), so the `+ rot` Keplerian term advects these
-    // bright/dim tangential streaks around the hole on a solid (opaque) disk.
-    // Wide contrast (0.1 → 1.9) so the sweeping streaks read clearly without
-    // needing see-through gaps.
-    let brightness = 0.1 + 1.8 * filament;
+    // Brightness: turbulence is a mild accent so the radial temperature gradient
+    // (inside disk_emission) dominates the visible luminosity. This keeps the
+    // disk smooth and gradient-driven rather than streaked by ridged filaments.
+    let brightness = mix(0.8, 1.2, turbulence);
 
     let col = disk_emission(r, pos, dir, brightness);
 
@@ -703,39 +700,30 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                 if (accum_alpha > 0.99) { break; }
             }
         } else {
-            // Volumetric tier. Single unified path: clip THIS step's segment
-            // to the disk slab |y|<=half_thickness, sample once at the clipped
-            // segment's midpoint, accumulate × the in-slab segment length.
-            // The previous design used two overlapping paths (in-slab step +
-            // at-plane edge-capture) with inconsistent angle-dependent weights
-            // (step_len vs thickness_proj) that produced radial spokes.
-            let H = uniforms.disk_half_thickness;
-            let dy = new_pos.y - prev.y;
-            var seg_t0 = 0.0;
-            var seg_t1 = 1.0;
-            var has_slab_seg = false;
-            if (abs(dy) < 1e-6) {
-                // Step is parallel to the slab plane: in-slab iff prev is in-slab.
-                has_slab_seg = abs(prev.y) <= H;
-            } else {
-                // Clip the parametric line prev+t*(new_pos-prev) to |y|<=H.
-                let ta = (H - prev.y) / dy;
-                let tb = (-H - prev.y) / dy;
-                seg_t0 = clamp(min(ta, tb), 0.0, 1.0);
-                seg_t1 = clamp(max(ta, tb), 0.0, 1.0);
-                has_slab_seg = seg_t1 > seg_t0;
-            }
-
-            if (has_slab_seg) {
-                let mid_t = (seg_t0 + seg_t1) * 0.5;
-                let mid = mix(prev, new_pos, vec3<f32>(mid_t));
-                let mid_r = r_of(mid);
-                if (mid_r >= uniforms.disk_inner && mid_r <= uniforms.disk_outer) {
-                    let s = disk_color_volumetric(mid, new_dir);
-                    let seg_len = (seg_t1 - seg_t0) * length(new_pos - prev);
-                    accum_color += (1.0 - accum_alpha) * s.color * s.density * seg_len;
-                    accum_alpha += (1.0 - accum_alpha) * s.density * seg_len;
-                }
+            // Volumetric tier. Per-step accumulation: at every accepted step
+            // whose endpoint lies inside the disk slab, sample density once and
+            // accumulate × the geometric step length. This integrates the
+            // emission/absorption along the ray through the slab — the standard
+            // volumetric front-to-back composite — and is what makes the disk
+            // read as solid and opaque rather than translucent.
+            //
+            // Replaces the old single-midpoint-in-clipped-slab design, which
+            // under-sampled (one density value per ray-slab traversal →
+            // see-through, jelly-like disk). Per-step integration matches the
+            // others/ reference (fragment.glsl.ts sample_accretion_disk, called
+            // every step of the raymarch loop).
+            //
+            // Thickness is now an H/R RATIO: H = r · disk_half_thickness, so the
+            // slab grows with radius (a thin disk's geometry), not a constant
+            // world-space band that is vanishingly thin at large r.
+            let r_here = r_of(new_pos);
+            let H = r_here * uniforms.disk_half_thickness;
+            if (abs(new_pos.y) <= H &&
+                r_here >= uniforms.disk_inner && r_here <= uniforms.disk_outer) {
+                let step_len = length(new_pos - prev);
+                let s = disk_color_volumetric(new_pos, new_dir);
+                accum_color += (1.0 - accum_alpha) * s.color * s.density * step_len;
+                accum_alpha += (1.0 - accum_alpha) * s.density * step_len;
             }
             if (accum_alpha > 0.99) { break; }
         }
