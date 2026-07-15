@@ -453,6 +453,71 @@ fn disk_color_volumetric(pos: vec3<f32>, dir: vec3<f32>) -> DiskSample {
     return DiskSample(vec3<f32>(col), total_density);
 }
 
+// Per-step disk integration that is DECOUPLED from the RK45 step size.
+//
+// Why this exists: the previous "sample at new_pos, weight by step_len" form
+// produced radial spokes. RK45's step size is spatially adaptive (small near
+// the hole where curvature is high, large in flat regions) AND varies between
+// neighbouring pixels, so weighting density by `step_len` injected a per-pixel
+// brightness modulation along the radial direction → spokes, densest at the
+// inner disk where steps are smallest.
+//
+// Fix: clip THIS step's segment to the disk slab analytically and weight each
+// sample by `seg_len` — the world-space length of the ray-slab intersection,
+// which depends only on the ray's incidence angle and the local slab height,
+// never on the RK45 step size. Then sample N points uniformly along the
+// clipped segment so the integral is well-resolved (a single midpoint sample
+// under-integrates the Gaussian vertical decay and leaves the disk translucent).
+//
+// `prev`/`new_pos` are disk-local (caller rotates by -disk_tilt).
+fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
+                          accum_color: ptr<function, vec3f>,
+                          accum_alpha: ptr<function, f32>) {
+    // Slab height H is radius-dependent (H/R ratio). Use the step's midpoint r
+    // to define H for this segment — the change in r across one RK45 step is
+    // small, so this local-constant approximation is accurate enough.
+    let mid = (prev + new_pos) * 0.5;
+    let r_mid = r_of(mid);
+    let H = r_mid * uniforms.disk_half_thickness;
+
+    // Clip the parametric segment prev + t·(new_pos − prev), t∈[0,1], to |y|≤H.
+    let dy = new_pos.y - prev.y;
+    var t0 = 0.0;
+    var t1 = 1.0;
+    if (abs(dy) < 1e-6) {
+        // Step is parallel to the disk plane: in-slab iff prev is in-slab.
+        if (abs(prev.y) > H) { return; }
+    } else {
+        let ta = ( H - prev.y) / dy;
+        let tb = (-H - prev.y) / dy;
+        t0 = clamp(min(ta, tb), 0.0, 1.0);
+        t1 = clamp(max(ta, tb), 0.0, 1.0);
+        if (t1 <= t0) { return; }  // segment does not cross the slab
+    }
+
+    // Analytic in-slab length — the key: depends on geometry, NOT on RK45 dt.
+    let seg_len = (t1 - t0) * length(new_pos - prev);
+
+    // N uniform samples along the clipped segment, front-to-back composite.
+    // Each sample carries density × (seg_len / N) so the N samples sum to the
+    // full segment integral when density is roughly constant; the Gaussian
+    // vertical decay is captured by sampling at differing heights within the
+    // slab. N is a compile-time constant (WGSL requires static loop bounds).
+    const N = 4u;
+    for (var i: u32 = 0u; i < N; i = i + 1u) {
+        let t = t0 + (t1 - t0) * (f32(i) + 0.5) / f32(N);
+        let p = mix(prev, new_pos, vec3f(t));
+        let rp = r_of(p);
+        if (rp < uniforms.disk_inner || rp > uniforms.disk_outer) {
+            continue;  // radial clipping: outside the annulus
+        }
+        let s = disk_color_volumetric(p, dir);
+        let ds = s.density * seg_len / f32(N);
+        *accum_color += (1.0 - *accum_alpha) * s.color * ds;
+        *accum_alpha += (1.0 - *accum_alpha) * ds;
+    }
+}
+
 // Relativistic jets along the spin axis (Y). Bipolar cones above/below the
 // disk with 0.92c outflow beaming. Ported from others/' sample_relativistic_jets:
 // Gaussian radial falloff, exponential length decay, outward-flowing noise,
@@ -700,31 +765,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                 if (accum_alpha > 0.99) { break; }
             }
         } else {
-            // Volumetric tier. Per-step accumulation: at every accepted step
-            // whose endpoint lies inside the disk slab, sample density once and
-            // accumulate × the geometric step length. This integrates the
-            // emission/absorption along the ray through the slab — the standard
-            // volumetric front-to-back composite — and is what makes the disk
-            // read as solid and opaque rather than translucent.
-            //
-            // Replaces the old single-midpoint-in-clipped-slab design, which
-            // under-sampled (one density value per ray-slab traversal →
-            // see-through, jelly-like disk). Per-step integration matches the
-            // others/ reference (fragment.glsl.ts sample_accretion_disk, called
-            // every step of the raymarch loop).
-            //
-            // Thickness is now an H/R RATIO: H = r · disk_half_thickness, so the
-            // slab grows with radius (a thin disk's geometry), not a constant
-            // world-space band that is vanishingly thin at large r.
-            let r_here = r_of(new_pos);
-            let H = r_here * uniforms.disk_half_thickness;
-            if (abs(new_pos.y) <= H &&
-                r_here >= uniforms.disk_inner && r_here <= uniforms.disk_outer) {
-                let step_len = length(new_pos - prev);
-                let s = disk_color_volumetric(new_pos, new_dir);
-                accum_color += (1.0 - accum_alpha) * s.color * s.density * step_len;
-                accum_alpha += (1.0 - accum_alpha) * s.density * step_len;
-            }
+            // Volumetric tier: clip this step to the disk slab and integrate N
+            // samples along the clipped segment, weighted by the analytic
+            // in-slab length (NOT the RK45 step size). See integrate_disk_segment
+            // for why the step-size-decoupled weight is what kills the radial
+            // spokes that the previous `* step_len` form produced.
+            integrate_disk_segment(prev, new_pos, new_dir, &accum_color, &accum_alpha);
             if (accum_alpha > 0.99) { break; }
         }
 
