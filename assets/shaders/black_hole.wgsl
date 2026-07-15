@@ -108,30 +108,26 @@ fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
                 let center = cell + vec3<f32>(0.5);
                 let dist = length(p - center); // Euclidean → round, never square
                 let col = mix(vec3<f32>(0.6, 0.7, 1.0), vec3<f32>(1.0, 0.9, 0.7), b);
-                if (uniforms.star_aa != 0u) {
-                    // Soft Gaussian glow. The neighborhood scan lets the falloff
-                    // decay smoothly to ~0 at the cell boundary instead of being
-                    // hard-clipped, so the star is a round anti-aliased disk.
-                    let radius = 0.25 + b * 0.4;
-                    let falloff = exp(-dist * dist / (radius * radius));
-                    let bright = b * falloff;
-                    if (bright > best.x) {
-                        best = vec4<f32>(bright, col.r, col.g, col.b);
-                    }
-                } else {
-                    // Tight round disk: smoothstep on Euclidean distance.
-                    let radius = 0.5;
-                    let falloff = smoothstep(radius, 0.0, dist);
-                    let bright = b * falloff;
-                    if (bright > best.x) {
-                        best = vec4<f32>(bright, col.r, col.g, col.b);
-                    }
+                // Both paths share the same brightness-driven radius and the
+                // same gain, so toggling AA only softens the edge — it does not
+                // change peak brightness or visible count. Before, the AA path
+                // used a larger radius (up to 0.65 vs 0.5), a heavier gain
+                // (4.0 vs 3.0), and a slow-decaying Gaussian whose long tail
+                // lifted many dim stars above the visibility floor — that's
+                // what made AA look like "bigger and more" stars.
+                let radius = 0.25 + b * 0.4;
+                let falloff = select(
+                    smoothstep(radius, 0.0, dist),                 // hard edge
+                    exp(-4.6 * dist * dist / (radius * radius)),    // soft edge
+                    uniforms.star_aa != 0u);
+                let bright = b * falloff;
+                if (bright > best.x) {
+                    best = vec4<f32>(bright, col.r, col.g, col.b);
                 }
             }
         }
     }
-    let gain = select(3.0, 4.0, uniforms.star_aa != 0u);
-    return best.yzw * best.x * gain * intensity;
+    return best.yzw * best.x * 3.0 * intensity;
 }
 
 // --- skybox ---
