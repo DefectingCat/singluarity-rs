@@ -215,10 +215,15 @@ fn value_noise3(p: vec3<f32>) -> f32 {
 }
 
 fn fbm3(p: vec3<f32>, octaves: u32) -> f32 {
+    // MAX_OCTAVES-with-break: the conservative WebGPU form for a runtime-
+    // chosen octave count. Older drivers can miscompile non-constant loop
+    // bounds; this branch is the first to pass dynamic octaves here.
+    const MAX_OCTAVES = 6u;
     var sum = 0.0;
     var amp = 0.5;
     var freq = 1.0;
-    for (var i: u32 = 0u; i < octaves; i = i + 1u) {
+    for (var i: u32 = 0u; i < MAX_OCTAVES; i = i + 1u) {
+        if (i >= octaves) { break; }
         sum = sum + amp * value_noise3(p * freq);
         freq = freq * 2.0;
         amp = amp * 0.5;
