@@ -21,6 +21,13 @@ rand_chacha = "0.3"
 web-sys = { version = "0.3", features = ["Gpu", "Navigator", "Window", "Document", "HtmlElement", "Element"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
+# rand 0.8 pulls getrandom 0.2, which on wasm32-unknown-unknown refuses to
+# compile unless its "js" feature is explicitly enabled (it calls into the
+# Web Crypto API via wasm-bindgen). Bevy's own rand usage is on getrandom
+# 0.3+, which enables this by default; our direct rand 0.8 dep does not.
+# Force-enabling it here unblocks the web build. See getrandom docs:
+# https://docs.rs/getrandom/#webassembly-support
+getrandom = { version = "0.2", features = ["js"] }
 
 # Desktop release tuning. This renderer is GPU-bound, but Bevy's CPU path
 # (resource management, system scheduling, egui, wgpu command submission)
