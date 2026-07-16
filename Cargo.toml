@@ -10,6 +10,11 @@ path = "src/lib.rs"
 [dependencies]
 bevy = "0.19"
 bevy_egui = "0.41"
+# Deterministic PRNG for planet seeding (ChaCha8Rng). `rand` is a transitive
+# dep via bevy_math but not declared directly; `rand_chacha` ships ChaCha8Rng.
+# Pinned to 0.8/0.3 (LTS, API-compatible with the Bevy 0.19 ecosystem).
+rand = "0.8"
+rand_chacha = "0.3"
 
 # Web-only deps for WebGPU detection + fallback message.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
