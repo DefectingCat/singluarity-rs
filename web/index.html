@@ -17,5 +17,11 @@
       data-cargo-features="bevy/webgpu"
       data-wasm-opt="z"
     />
+    <!-- Ship the WGSL shaders so Bevy's WasmAssetReader can fetch them at
+         runtime (it requests `assets/shaders/*.wgsl` over HTTP, matching the
+         default AssetPlugin file_path of "assets"). Without this the shaders
+         are absent from dist/ and every material loads a 404 fallback → grey
+         screen. -->
+    <link data-trunk rel="copy-dir" href="../assets" />
   </body>
 </html>
