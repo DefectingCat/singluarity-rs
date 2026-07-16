@@ -83,7 +83,18 @@ pub fn ui_system(
                 });
                 egui::CollapsingHeader::new("Jets").show(ui, |ui| {
                     ui.checkbox(&mut params.jets_enabled, "Enabled");
-                    ui.add_enabled(params.jets_enabled, egui::Slider::new(&mut params.jets_strength, 0.0..=3.0).text("Strength"));
+                    // Mirror the shader's spin gate (sample_jets in black_hole.wgsl):
+                    // jets are a spin-powered (Blandford-Znajek) outflow and render
+                    // only for χ ≥ 0.05. When the user enables them at low spin,
+                    // explain the no-op so the checkbox doesn't look broken.
+                    let jets_renderable = params.spin >= 0.05;
+                    if params.jets_enabled && !jets_renderable {
+                        ui.label("Spin (χ) too low — jets need χ ≥ 0.05.");
+                    }
+                    ui.add_enabled(
+                        params.jets_enabled && jets_renderable,
+                        egui::Slider::new(&mut params.jets_strength, 0.0..=3.0).text("Strength"),
+                    );
                 });
                 egui::CollapsingHeader::new("Renderer").show(ui, |ui| {
                     ui.add(egui::Slider::new(&mut params.steps, 50..=600).text("Steps"));
