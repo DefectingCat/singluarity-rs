@@ -76,6 +76,30 @@ impl DiskColorMode {
     }
 }
 
+/// Per-pixel supersampling for the higher-order lensed-image rings. The rings
+/// are physical (lensed disk images), but the integrator renders each wrap as a
+/// sharp discrete band; firing several jittered sub-rays per pixel and
+/// averaging antialiases those edges into a smooth gradient. Off = 1 ray/pixel
+/// (cheapest, rings visible); Low = 2; High = 4 (smoothest, ~4× the march cost).
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum AaQuality {
+    Off,
+    Low,
+    #[default]
+    High,
+}
+
+impl AaQuality {
+    /// Sub-rays per pixel, consumed by the shader's supersampling loop.
+    pub fn samples(self) -> u32 {
+        match self {
+            AaQuality::Off => 1,
+            AaQuality::Low => 2,
+            AaQuality::High => 4,
+        }
+    }
+}
+
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
@@ -125,6 +149,8 @@ pub struct BlackHoleParams {
     pub disk_temp: f32,
     pub jets_enabled: bool,
     pub jets_strength: f32,
+    // Anti-aliasing (Phase 3.3): supersample count for the lensed-image rings.
+    pub aa_quality: AaQuality,
 }
 
 impl Default for BlackHoleParams {
@@ -175,6 +201,11 @@ impl Default for BlackHoleParams {
             disk_temp: 6500.0,
             jets_enabled: true,
             jets_strength: 1.0,
+            // Supersampling off on web (WebGPU budget) and Low (2×) on desktop.
+            // The RK45 march is already ~10× Phase 1's cost, so desktop stays
+            // at 2× by default — enough to soften the rings — with High (4×)
+            // available in the UI for a fully smooth Gargantua look.
+            aa_quality: if cfg!(target_arch = "wasm32") { AaQuality::Off } else { AaQuality::Low },
         }
     }
 }

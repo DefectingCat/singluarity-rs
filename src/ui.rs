@@ -127,6 +127,22 @@ pub fn ui_system(
                         ui.add(egui::Slider::new(&mut params.exposure, 0.5..=3.0).text("Exposure"));
                         ui.add(egui::Slider::new(&mut params.render_scale, 0.25..=1.0).text("Resolution scale"));
                         ui.checkbox(&mut params.star_aa, "Anti-aliased stars");
+                        {
+                            // Per-pixel supersampling: antialiases the higher-order
+                            // lensed-image rings on the disk into a smooth gradient.
+                            // Cost scales linearly with sample count (each sub-ray
+                            // runs the full RK45 march).
+                            use crate::params::AaQuality;
+                            let mut a = params.aa_quality;
+                            egui::ComboBox::from_label("Ring anti-alias")
+                                .selected_text(format!("{:?} ({}×)", a, a.samples()))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut a, AaQuality::Off, "Off (1×)");
+                                    ui.selectable_value(&mut a, AaQuality::Low, "Low (2×)");
+                                    ui.selectable_value(&mut a, AaQuality::High, "High (4×)");
+                                });
+                            params.aa_quality = a;
+                        }
                         ui.label("MSAA is decorative on a fullscreen shader (no geometry edges to sample).");
                     });
             });

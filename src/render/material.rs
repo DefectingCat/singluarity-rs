@@ -58,6 +58,10 @@ pub struct BlackHoleUniforms {
     pub disk_temp: f32,         // blackbody base temperature (Kelvin)
     pub jets_enabled: u32,
     pub jets_strength: f32,
+    // Anti-aliasing (Phase 3.3): per-pixel supersample count for the lensed-image rings.
+    pub aa_samples: u32,
+    pub _pad6: f32,
+    pub _pad7: f32,
 }
 
 impl Default for BlackHoleUniforms {
@@ -107,6 +111,9 @@ impl Default for BlackHoleUniforms {
             disk_temp: 6500.0,
             jets_enabled: 1,
             jets_strength: 1.0,
+            aa_samples: 1, // overridden by params.aa_quality each frame
+            _pad6: 0.0,
+            _pad7: 0.0,
         }
     }
 }

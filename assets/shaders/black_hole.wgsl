@@ -53,9 +53,19 @@ struct BlackHoleUniforms {
     disk_temp: f32,         // blackbody base temperature (Kelvin)
     jets_enabled: u32,      // 0=off, 1=on
     jets_strength: f32,     // jet brightness multiplier
+    aa_samples: u32,        // per-pixel supersample count (1/2/4); >1 antialiases the higher-order lensed-image rings
+    _pad6: f32,             // explicit round-up to 16-byte uniform alignment
+    _pad7: f32,             //   (matches BlackHoleUniforms in material.rs byte-for-byte)
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
+
+// Per-pixel fragment coordinate, set at the top of `fragment` from
+// `in.position.xy` (the @builtin(position) frag coord). Used as a deterministic
+// seed for the slab sub-sample jitter and the supersample jitter so the noise
+// is spatially stable (no per-frame flicker). `var<private>` is the same form
+// `blur.wgsl` uses for its runtime-indexed kernel tables.
+var<private> pixel_seed: vec2<f32>;
 
 // ---------- planets storage (binding 3) ----------
 struct SphereData {
@@ -507,14 +517,26 @@ fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
     // Analytic in-slab length — the key: depends on geometry, NOT on RK45 dt.
     let seg_len = (t1 - t0) * length(new_pos - prev);
 
-    // N uniform samples along the clipped segment, front-to-back composite.
-    // Each sample carries density × (seg_len / N) so the N samples sum to the
-    // full segment integral when density is roughly constant; the Gaussian
-    // vertical decay is captured by sampling at differing heights within the
-    // slab. N is a compile-time constant (WGSL requires static loop bounds).
+    // N samples along the clipped segment, front-to-back composite. Each sample
+    // carries density × (seg_len / N) so the N samples sum to the full segment
+    // integral when density is roughly constant; the Gaussian vertical decay is
+    // captured by sampling at differing heights within the slab. N is a
+    // compile-time constant (WGSL requires static loop bounds).
+    //
+    // The sub-sample position is STOCHASTIC, not on the deterministic
+    // (i+0.5)/N grid. A deterministic grid aliases against the 2-D pixel grid
+    // and against the per-ray RK45 step lattice → a concentric moiré on the
+    // disk. Folding the pixel coordinate and the sample index into a hash and
+    // using it to jitter the position within stratum i turns the moiré into
+    // unstructured noise (which the HDR + bloom pipeline tolerates far better
+    // than coherent bands). The jitter stays inside stratum i (amplitude 1/N),
+    // so the quadrature order is preserved and the integrated density is
+    // unbiased. The seed is pixel-only (no time) → the noise is spatially
+    // stable, no per-frame flicker.
     const N = 4u;
     for (var i: u32 = 0u; i < N; i = i + 1u) {
-        let t = t0 + (t1 - t0) * (f32(i) + 0.5) / f32(N);
+        let stratum = f32(i) + hash13(vec3<f32>(pixel_seed, f32(i)));
+        let t = t0 + (t1 - t0) * stratum / f32(N);
         let p = mix(prev, new_pos, vec3f(t));
         let rp = r_of(p);
         if (rp < uniforms.disk_inner || rp > uniforms.disk_outer) {
@@ -708,16 +730,13 @@ fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
 }
 
 // ====================== main ======================
-@fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let aspect = uniforms.resolution.x / uniforms.resolution.y;
-    var uv = (in.uv * 2.0 - 1.0);
-    uv.x *= aspect;
-    let dir = ray_direction(uv);
 
-    // Work in disk-local space: rotate eye + dir by -disk_tilt around X so the
-    // disk lies on y=0. (disk_hit/disk_color assume disk-local coords.)
-
+// One full ray march (camera → capture/escape/budget) for a single ray
+// direction, returning the accumulated HDR color. Factored out of `fragment`
+// so the supersampling loop can fire several jittered rays per pixel and
+// average them. `dir` is the camera-space ray direction; the disk-local
+// rotation and all per-ray state live in here so each sample is independent.
+fn march(dir: vec3<f32>) -> vec3<f32> {
     // Total path length to integrate: enough to go from the camera, past the
     // hole, and far enough beyond to count as escaped.
     let eye_dist = length(uniforms.eye.xyz);
@@ -731,6 +750,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let tol = 1e-3;
     let r_plus = 0.5 + sqrt(max(0.25 - (uniforms.spin * 0.5) * (uniforms.spin * 0.5), 0.0));
 
+    // Work in disk-local space: rotate eye + dir by -disk_tilt around X so the
+    // disk lies on y=0. (disk_hit/disk_color assume disk-local coords.)
     var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
     var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
     var dt  = dt_init;
@@ -829,5 +850,47 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         d = new_dir;
     }
 
-    return vec4<f32>(accum_color, 1.0);
+    return accum_color;
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Seed the per-pixel hash used by the slab sub-sample jitter (Fix B) and
+    // the supersample jitter (Fix A). @builtin(position) is the fragment's
+    // framebuffer coordinate; using it makes the noise spatially stable.
+    pixel_seed = in.position.xy;
+
+    let aspect = uniforms.resolution.x / uniforms.resolution.y;
+    let base_uv = vec2<f32>((in.uv * 2.0 - 1.0).x * aspect, (in.uv * 2.0 - 1.0).y);
+
+    // Per-pixel stochastic supersampling (Fix A). The concentric rings that
+    // appear on the disk are higher-order gravitationally-lensed disk images:
+    // rays near the critical impact parameter wrap around the hole, and each
+    // wrap crosses the disk plane once, projecting to a ring. The integrator
+    // renders each wrap as a sharp discrete band rather than a smooth image, so
+    // the rings read as an artifact. Firing several jittered sub-rays per pixel
+    // and averaging antialiases those sharp band edges into a smooth gradient
+    // (the physical Einstein-ring structure is preserved; only its staircase
+    // discretization is removed).
+    //
+    // MAX_AA_SAMPLES is a compile-time cap (WGSL needs static loop bounds);
+    // the runtime count comes from uniforms.aa_samples with an early break —
+    // the same MAX-with-break form fbm3/ridged_fbm use for dynamic octaves.
+    const MAX_AA_SAMPLES = 4u;
+    var color_sum = vec3<f32>(0.0);
+    var n_done = 0u;
+    for (var s: u32 = 0u; s < MAX_AA_SAMPLES; s = s + 1u) {
+        if (s >= uniforms.aa_samples) { break; }
+        var uv = base_uv;
+        if (uniforms.aa_samples > 1u) {
+            // ~half-pixel jitter in NDC, seeded by pixel + sample index. The
+            // seed is pixel-only (no time) so the pattern is temporally stable.
+            let j = hash33(vec3<f32>(pixel_seed, f32(s))) - 0.5;
+            uv = uv + j.xy / uniforms.resolution;
+        }
+        color_sum = color_sum + march(ray_direction(uv));
+        n_done = n_done + 1u;
+    }
+
+    return vec4<f32>(color_sum / f32(n_done), 1.0);
 }
