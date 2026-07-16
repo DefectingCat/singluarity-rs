@@ -87,6 +87,26 @@ pub fn kerr_orbital_frequency(r: f32, chi: f32) -> f32 {
     1.0 / (r.powf(1.5) + a)
 }
 
+/// Kerr 赤道圆轨节点进动率 (Lense-Thirring, 强场精确). χ=0 返回 0.
+///
+/// `Ω_LT = Ω_φ - Ω_θ`, 其中 Ω_θ 是垂直 epicyclic 频率 (Okazaki 1987;
+/// Kato/Fukue/Mineshige "Black-Hole Accretion Disks"):
+/// `Ω_θ² = Ω_φ² · (1 − 4a√M/r^1.5 + 3a²/r²)`.
+/// χ=0 时 a=0, 括号=1, 故 Ω_θ=Ω_φ, 进动为零 (Schwarzschild 球对称).
+///
+/// 注: 交叉项是 `a√M/r^1.5` (半径 -1.5 次幂), 不是 `a·Ω_φ/r`. 后者会让
+/// Ω_θ 偏大、进动偏小, 且破坏"进动随 χ 单调增"的物理性质.
+pub fn kerr_nodal_precession(r: f32, chi: f32) -> f32 {
+    let m = 0.5;
+    let a = chi * m;
+    let omega_phi = kerr_orbital_frequency(r, chi);
+    // 垂直 epicyclic 频率比 (>=0; 极端 r/a 组合下数值精度可能略负, 钳位)
+    let sqrt_m = m.sqrt();
+    let ratio = (1.0 - 4.0 * a * sqrt_m / r.powf(1.5) + 3.0 * a * a / (r * r)).max(0.0);
+    let omega_theta = omega_phi * ratio.sqrt();
+    omega_phi - omega_theta
+}
+
 /// Kerr bending acceleration (CPU mirror of the shader `deriv` accel).
 /// `chi = a/M ∈ [0,1]`. At chi=0 this equals `bending_accel`.
 pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
@@ -309,5 +329,43 @@ mod tests {
         let omega_0 = kerr_orbital_frequency(r, 0.0);
         let omega_1 = kerr_orbital_frequency(r, 1.0);
         assert!(omega_1 < omega_0, "prograde Ω should decrease with spin");
+    }
+
+    #[test]
+    fn nodal_precession_vanishes_at_zero_spin() {
+        // χ=0: 球对称 (Schwarzschild), 无节点进动
+        for r in [4.0_f32, 6.0, 10.0, 20.0] {
+            let prec = kerr_nodal_precession(r, 0.0);
+            assert!(
+                prec.abs() < 1e-6,
+                "χ=0 at r={} should have zero precession, got {}",
+                r, prec
+            );
+        }
+    }
+
+    #[test]
+    fn nodal_precession_grows_with_spin() {
+        // 固定 r, prograde 节点进动率随 χ 单调增
+        let r = 6.0;
+        let p_low = kerr_nodal_precession(r, 0.3);
+        let p_high = kerr_nodal_precession(r, 0.9);
+        assert!(p_high > p_low, "precession should grow with spin");
+        assert!(p_low > 0.0, "prograde precession should be positive");
+    }
+
+    #[test]
+    fn nodal_precession_strong_field_exceeds_weak_field() {
+        // r<6 强场区: 精确 Ω_LT > 弱场近似 2aM/r³.
+        // a = χM = 0.5χ, M = 0.5 → 2aM/r³ = 2·(0.5χ)·0.5/r³ = 0.5χ/r³.
+        let r = 4.0_f32;
+        let chi = 0.9;
+        let weak = 0.5 * chi / r.powi(3);
+        let strong = kerr_nodal_precession(r, chi);
+        assert!(
+            strong > weak,
+            "strong-field precession at r={} should exceed weak approx {} , got {}",
+            r, weak, strong
+        );
     }
 }
