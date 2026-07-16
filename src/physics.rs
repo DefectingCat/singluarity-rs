@@ -79,6 +79,14 @@ pub fn kerr_horizon(chi: f32) -> f32 {
     m + (m * m - a * a).max(0.0).sqrt()
 }
 
+/// Kerr 赤道 prograde 圆轨角速度 (Rs=1, M=0.5). Bardeen 1972 eqn 2.16.
+/// `Ω_φ = 1 / (r^1.5 + a)`, a = χM = 0.5χ. χ=0 退化为牛顿 1/r^1.5.
+pub fn kerr_orbital_frequency(r: f32, chi: f32) -> f32 {
+    let m = 0.5;
+    let a = chi * m;
+    1.0 / (r.powf(1.5) + a)
+}
+
 /// Kerr bending acceleration (CPU mirror of the shader `deriv` accel).
 /// `chi = a/M ∈ [0,1]`. At chi=0 this equals `bending_accel`.
 pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
@@ -278,5 +286,28 @@ mod tests {
         let b = impact_parameter(eye, dir);
         assert!(b > BCRIT);
         assert!(!is_captured(eye, dir, 2000, 0.1), "ray above bcrit should escape");
+    }
+
+    #[test]
+    fn orbital_frequency_reduces_to_newton_at_zero_spin() {
+        // χ=0: Ω = 1/r^1.5 (牛顿开普勒, Rs=1)
+        for r in [4.0_f32, 6.0, 10.0, 20.0] {
+            let newton = 1.0 / r.powf(1.5);
+            let kerr = kerr_orbital_frequency(r, 0.0);
+            assert!(
+                (kerr - newton).abs() < 1e-6,
+                "χ=0 at r={}: expected {} (newton), got {}",
+                r, newton, kerr
+            );
+        }
+    }
+
+    #[test]
+    fn orbital_frequency_decreases_with_spin_at_fixed_r() {
+        // prograde 轨道 (a>0): Ω_φ 随 χ 减小 (分母 r^1.5+a 增大)
+        let r = 8.0;
+        let omega_0 = kerr_orbital_frequency(r, 0.0);
+        let omega_1 = kerr_orbital_frequency(r, 1.0);
+        assert!(omega_1 < omega_0, "prograde Ω should decrease with spin");
     }
 }
