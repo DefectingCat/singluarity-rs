@@ -70,7 +70,7 @@
     "optimizing-rust-performance": {
       "source": "DefectingCat/optimizing-rust-performance",
       "sourceType": "github",
-      "skillPath": "SKILL.md",
+      "skillPath": "optimizing-rust-performance/SKILL.md",
       "computedHash": "96bf0221d116e617055f5dc038bb33d92dd61b7808d804f92da78d32c01e6934"
     },
     "prototype": {
@@ -84,6 +84,12 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/research/SKILL.md",
       "computedHash": "87d17f5103899fbe179b552a85485d50f2316ca5b3128f5716af7d88817533e1"
+    },
+    "rust-advanced-performance": {
+      "source": "DefectingCat/optimizing-rust-performance",
+      "sourceType": "github",
+      "skillPath": "rust-advanced-performance/SKILL.md",
+      "computedHash": "dc4863bc85f63bb2810e61c3001d06730e2df520ca08a4bd800f662cdfb5d12c"
     },
     "setup-matt-pocock-skills": {
       "source": "mattpocock/skills",
