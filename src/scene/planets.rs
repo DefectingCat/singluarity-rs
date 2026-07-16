@@ -172,7 +172,10 @@ pub fn spawn_planet_system(
         let inclination = rng.gen_range(0.0..PI);
         let longitude = rng.gen_range(0.0..TAU);
         let phase = rng.gen_range(0.0..TAU);
-        let radius_factor = rng.gen_range(2.0..4.0);
+        // 半径因子以 UI 的 planet_radius_factor 为中心 ±0.75 散布, 既让滑条
+        // 真正控制轨道尺度, 又保留 per-planet 半径多样性 (避免全同半径).
+        // 滑条范围 1.5..=5.0, 散布后实际 k ∈ [0.75, 5.75], 钳到 ISCO 外.
+        let radius_factor = (params.planet_radius_factor + rng.gen_range(-0.75..0.75)).max(1.0);
         // 颜色: 暖色行星 (橙/红/黄系), 避开蓝色 (易与背景星混淆)
         let hue = rng.gen_range(0.02..0.13);
         let color = hsv_to_rgb(hue, rng.gen_range(0.5..0.9), rng.gen_range(0.7..1.0));
