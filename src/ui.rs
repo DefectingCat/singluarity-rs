@@ -6,6 +6,7 @@ pub fn ui_system(
     mut params: ResMut<crate::params::BlackHoleParams>,
     mut camera: ResMut<crate::camera::OrbitCamera>,
     mut wants: ResMut<crate::camera::WantsPointer>,
+    mut planet_dirty: ResMut<crate::scene::planets::PlanetSystemDirty>,
 ) {
     if let Ok(ctx) = contexts.ctx_mut() {
         egui::Window::new("Controls")
@@ -52,6 +53,36 @@ pub fn ui_system(
                             cm == DiskColorMode::Blackbody,
                             egui::Slider::new(&mut params.disk_temp, 1000.0..=50000.0).text("Temperature (K)"),
                         );
+                    });
+                egui::CollapsingHeader::new("Planets")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        // Record state before edits; if seed/count/k/enabled change,
+                        // flag dirty so spawn_planet_system regenerates next frame.
+                        // (time_scale excluded: it only scales orbit_system's time,
+                        //  no respawn needed.)
+                        let prev = (
+                            params.planets_enabled,
+                            params.planet_count_target,
+                            params.planet_radius_factor,
+                            params.planet_seed,
+                        );
+                        ui.checkbox(&mut params.planets_enabled, "Enable");
+                        ui.add(egui::Slider::new(&mut params.planet_count_target, 0..=8).text("Count"));
+                        ui.add(egui::Slider::new(&mut params.planet_radius_factor, 1.5..=5.0).text("Radius factor k"));
+                        let isco = crate::physics::kerr_isco(params.spin);
+                        ui.label(format!("ISCO: {:.3} → r = {:.3}", isco, params.planet_radius_factor * isco));
+                        ui.add(egui::Slider::new(&mut params.planet_seed, 0..=1000).text("Seed"));
+                        ui.add(egui::Slider::new(&mut params.planet_time_scale, 1.0..=200.0).text("Time scale"));
+                        let curr = (
+                            params.planets_enabled,
+                            params.planet_count_target,
+                            params.planet_radius_factor,
+                            params.planet_seed,
+                        );
+                        if curr != prev {
+                            planet_dirty.0 = true;
+                        }
                     });
                 egui::CollapsingHeader::new("Disk Turbulence")
                     .default_open(true)
