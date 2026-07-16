@@ -145,8 +145,17 @@ fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
 }
 
 // --- skybox ---
+// textureSampleLevel (not textureSample) is REQUIRED here: this is called from
+// inside the main RK45 integration loop, whose control flow is non-uniform
+// (`if (accum_alpha > 0.99) { break; }`, per-pixel early exit). The WGSL spec
+// forbids textureSample outside uniform control flow because it needs
+// screen-space derivatives for mip selection; Chrome's Tint enforces this and
+// rejects the shader, while naga (desktop) does not — which is why this only
+// crashed the web build. textureSampleLevel takes an explicit LOD (0 here: the
+// skybox cubemap is sampled at full resolution, no mip minification) and is
+// permitted in non-uniform flow. The visual result is identical.
 fn skybox_color(dir: vec3<f32>) -> vec3<f32> {
-    return textureSample(skybox, skybox_sampler, dir).rgb;
+    return textureSampleLevel(skybox, skybox_sampler, dir, 0.0).rgb;
 }
 
 // --- geodesic ---
