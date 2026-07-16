@@ -554,7 +554,17 @@ fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
 // Gaussian radial falloff, exponential length decay, outward-flowing noise,
 // δ^3.5 beaming (no floor needed — β=0.92 keeps the denominator positive).
 // Front-to-back composited into the same accumulators as the disk.
-fn sample_jets(pos: vec3f, dir: vec3f, r_plus: f32,
+//
+// `step_len` is the world-space length of THIS RK45 step (|new_pos − prev|),
+// passed in by the caller. The per-step emission is weighted by it so the
+// integrated jet brightness is step-size-independent — the same technique the
+// disk path uses (integrate_disk_segment weights on the analytic in-slab
+// length). Two prior attempts both produced banding: `* dt` varied with the
+// adaptive step size (radial bands), and a fixed `0.5` made the per-UNIT-length
+// contribution ∝ 1/step_len, so it brightened wherever steps packed together
+// (near the hole) → the concentric base-of-jet bands. Weighting on the actual
+// geometric step length makes the contribution per unit length constant.
+fn sample_jets(pos: vec3f, dir: vec3f, r_plus: f32, step_len: f32,
                accum_color: ptr<function, vec3f>, accum_alpha: ptr<function, f32>) {
     // Relativistic jets are spin-powered (Blandford-Znajek): the mechanism taps
     // the ergosphere, which only exists for a rotating hole. At χ ≈ 0 there is
@@ -600,19 +610,14 @@ fn sample_jets(pos: vec3f, dir: vec3f, r_plus: f32,
     let beaming = min(pow(delta, 3.5), 8.0);
 
     let base_color = vec3f(0.4, 0.7, 1.0);
-    // Decouple accumulation from the RK45 step size. Multiplying by `dt` (the
-    // adaptive step the caller passes in) injects a per-pixel brightness
-    // modulation along the jet axis: dt varies across a 16× range (dt_min..
-    // dt_max) and between neighbouring pixels, so `* dt` paints bright/dim
-    // bands and ring structures whose only cause is the integrator's step
-    // choice, not the physics. The disk path hit the identical bug (radial
-    // spokes) and fixed it by weighting on the analytic in-slab length instead
-    // of dt (see integrate_disk_segment). The jet has no comparable analytic
-    // segment to clip to, so use a fixed normalized weight (0.5) — brightness
-    // then depends only on geometry and beaming, never on dt.
-    let emission = base_color * jet_density * 0.05 * beaming * uniforms.jets_strength * 0.5;
+    // Weight the per-step emission by the geometric step length so the
+    // integrated brightness is proportional to the path length through the jet,
+    // not to how many RK45 steps happened to fall there. The 0.1 coefficient is
+    // a per-unit-length strength, calibrated against the default scene to match
+    // the old fixed-0.5 brightness at the typical accepted-step length (~0.5).
+    let emission = base_color * jet_density * 0.05 * beaming * uniforms.jets_strength * step_len * 0.1;
     *accum_color += emission * (1.0 - *accum_alpha);
-    *accum_alpha += jet_density * 0.05 * uniforms.jets_strength * 0.5;
+    *accum_alpha += jet_density * 0.05 * uniforms.jets_strength * step_len * 0.1;
 }
 
 // --- planets ---
@@ -827,7 +832,7 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
 
         // --- relativistic jets (along the spin axis) ---
         if (uniforms.jets_enabled != 0u) {
-            sample_jets(new_pos, new_dir, r_plus, &accum_color, &accum_alpha);
+            sample_jets(new_pos, new_dir, r_plus, length(new_pos - prev), &accum_color, &accum_alpha);
             if (accum_alpha > 0.99) { break; }
         }
 
