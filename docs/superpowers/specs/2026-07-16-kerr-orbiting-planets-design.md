@@ -38,16 +38,18 @@
 Ω_LT(r, χ) = Ω_φ(r, χ) − Ω_θ(r, χ)
 ```
 
-其中 `Ω_θ` 是 Kerr 赤道圆轨的垂直 epicyclic 频率，闭式表达（[Caltech Ph236 lec27](http://www.tapir.caltech.edu/~chirata/ph236/2011-12/lec27.pdf)；[Okazaki、Kato 等的 标准 epicyclic 频率结果](https://arxiv.org/pdf/1304.6936)）：
+其中 `Ω_θ` 是 Kerr 赤道圆轨的垂直 epicyclic 频率（[Okazaki 1987](https://articles.adsabs.harvard.edu/pdf/1985PASJ...37..807O)；Kato/Fukue/Mineshige "Black-Hole Accretion Disks"）：
 
 ```
-Ω_θ² = Ω_φ² · (1 − 4a·Ω_φ/r + 3a²/r²)        // a = 0.5χ
-Ω_θ  = Ω_φ · sqrt(1 − 4a·Ω_φ/r + 3a²/r²)
+Ω_θ² = Ω_φ² · (1 − 4a√M/r^1.5 + 3a²/r²)        // a = 0.5χ, M = 0.5
+Ω_θ  = Ω_φ · sqrt(1 − 4a√M/r^1.5 + 3a²/r²)
 ```
+
+**关键：交叉项是 `a√M/r^1.5`（半径 −1.5 次幂），不是 `a·Ω_φ/r`。** 后者会让 `Ω_θ` 偏大、进动偏小，并破坏"进动随 χ 单调增"的物理性质（实现时这个错误被 `nodal_precession_grows_with_spin` 测试当场抓住）。
 
 **退化验证：** `χ = 0` 时 `a = 0`，括号内 = 1，故 `Ω_θ = Ω_φ`，`Ω_LT = 0`——精确退化为"轨道面固定"（Schwarzschild 球对称），满足 AGENTS.md 的核心不变量。
 
-**弱场极限交叉验证：** 大 `r` 时展开 `Ω_φ ≈ r^−1.5`，`Ω_θ ≈ Ω_φ(1 − 1.5·(2Ma/r³)/Ω_φ · ...)`，最终 `Ω_LT → 2Ma/r³ = χ/r³`（M=0.5）。此弱场极限用作测试断言，不用于渲染。
+**弱场极限交叉验证：** 大 `r` 展开，`Ω_LT → 2aM/r³ = 0.5χ/r³`（M=0.5，a=0.5χ）。此弱场极限用作测试断言，不用于渲染。
 
 **实现：** `kerr_nodal_precession(r, chi)` 封装上述两式，返回 `Ω_φ - Ω_θ`。注意括号内可能因数值精度略负（极端 r/a 组合），`sqrt` 前用 `.max(0.0)` 钳位。
 
