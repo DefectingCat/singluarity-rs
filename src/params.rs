@@ -151,6 +151,12 @@ pub struct BlackHoleParams {
     pub jets_strength: f32,
     // Anti-aliasing (Phase 3.3): supersample count for the lensed-image rings.
     pub aa_quality: AaQuality,
+    // Planets (Phase 3.4: Kerr orbiting planets)
+    pub planets_enabled: bool,
+    pub planet_count_target: u32,  // 0..=8
+    pub planet_radius_factor: f32, // k, 乘到 kerr_isco(χ) 上
+    pub planet_seed: u32,          // ChaCha8Rng 种子, 改了触发系统重生
+    pub planet_time_scale: f32,    // 模拟时间放大 (进动很慢, 需放大才可见)
 }
 
 impl Default for BlackHoleParams {
@@ -206,6 +212,13 @@ impl Default for BlackHoleParams {
             // at 2× by default — enough to soften the rings — with High (4×)
             // available in the UI for a fully smooth Gargantua look.
             aa_quality: if cfg!(target_arch = "wasm32") { AaQuality::Off } else { AaQuality::Low },
+            // Planets: 6 颗, k=2.5 (r ∈ [1.25, 7.5], 横跨强场区),
+            // 种子 42, time_scale 50× (Ω_LT 在 r=8 转一圈 ~25 min, 放大才可见).
+            planets_enabled: true,
+            planet_count_target: 6,
+            planet_radius_factor: 2.5,
+            planet_seed: 42,
+            planet_time_scale: 50.0,
         }
     }
 }

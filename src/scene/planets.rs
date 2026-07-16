@@ -67,6 +67,23 @@ pub fn orbit_position(orbit: &OrbitParams, t: f32, chi: f32) -> Vec3 {
     r * (theta.cos() * u_p + theta.sin() * v_p)
 }
 
+/// 每帧读 OrbitParams + time + spin, 用闭式公式写 Planet.center.
+/// 必须在 upload_planets 之前运行 (plugin.rs 用 .before() 保证).
+pub fn orbit_system(
+    time: Res<Time>,
+    params: Res<crate::params::BlackHoleParams>,
+    mut query: Query<(&OrbitParams, &mut Planet)>,
+) {
+    if !params.planets_enabled {
+        return;
+    }
+    // time_scale 放大模拟时间, 让慢进动在合理时间内可见 (Ω_LT 在 r=8 转一圈 ~25 min)
+    let t = time.elapsed_secs() * params.planet_time_scale;
+    for (orbit, mut planet) in &mut query {
+        planet.center = orbit_position(orbit, t, params.spin);
+    }
+}
+
 /// Collects all Planet components, writes them into the shared MAX_PLANETS-sized
 /// `ShaderBuffer` that the material already binds, and updates `planet_count`.
 ///
