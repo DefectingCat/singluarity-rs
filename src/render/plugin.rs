@@ -96,6 +96,7 @@ impl Plugin for BlackHolePlugin {
         app.init_resource::<crate::camera::OrbitCamera>()
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
+            .init_resource::<crate::scene::planets::PlanetSystemDirty>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::CompositeMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
@@ -110,7 +111,7 @@ impl Plugin for BlackHolePlugin {
             // Runs in PreStartup, before setup_primary_egui_context_system.
             .add_systems(bevy::prelude::PreStartup, disable_egui_auto_context)
             .add_systems(Startup, spawn_fullscreen_quad)
-            .add_systems(Startup, crate::scene::planets::spawn_default_planet)
+            .add_systems(Startup, crate::scene::planets::spawn_planet_system)
             .add_systems(
                 Update,
                 (
@@ -119,6 +120,12 @@ impl Plugin for BlackHolePlugin {
                     resize_offscreen,
                     nudge_camera,
                 ),
+            )
+            .add_systems(Update, crate::scene::planets::spawn_planet_system)
+            .add_systems(
+                Update,
+                crate::scene::planets::orbit_system
+                    .before(crate::scene::planets::upload_planets),
             )
             .add_systems(Update, crate::scene::planets::upload_planets)
             .add_systems(Update, rebuild_bloom)

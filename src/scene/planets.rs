@@ -2,6 +2,8 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 
 use crate::render::material::{SphereData, MAX_PLANETS};
 
@@ -26,6 +28,10 @@ pub struct OrbitParams {
     /// 轨道内初始相位 (rad).
     pub phase: f32,
 }
+
+/// UI 改了种子/count/k 时置位, spawn_planet_system 检测到就重生整个行星系统.
+#[derive(Resource, Default)]
+pub struct PlanetSystemDirty(pub bool);
 
 /// 由轨道根数 + 当前 (模拟)时间 + 自旋, 计算行星世界空间位置.
 /// 纯函数: 无 Bevy 依赖, 可独立测试.
@@ -134,14 +140,74 @@ pub fn upload_planets(
     }
 }
 
-/// Spawns a default test planet behind/above the hole so lensing is visible.
-pub fn spawn_default_planet(mut commands: Commands) {
-    commands.spawn(Planet {
-        center: Vec3::new(0.0, 2.0, -25.0),
-        radius: 2.0,
-        color: Vec3::new(0.3, 0.5, 1.0),
-        emissive: false,
-    });
+/// (重)生成行星系统. 检测 PlanetSystemDirty: 若置位, 先 despawn 所有现有
+/// (Planet, OrbitParams), 再用 ChaCha8Rng + params.planet_seed 重新随机生成.
+/// 确定性种子 → 同种子给同布局, 方便调试/截图/测试.
+///
+/// 同时注册在 Startup 和 Update: Startup 首帧靠 "existing 为空" 门控首次生成;
+/// Update 路径靠 dirty flag 门控重生. 不会每帧重建.
+pub fn spawn_planet_system(
+    mut commands: Commands,
+    params: Res<crate::params::BlackHoleParams>,
+    mut dirty: ResMut<PlanetSystemDirty>,
+    existing: Query<Entity, With<Planet>>,
+) {
+    // 只在 dirty, 或现有行星为零 (首帧/Startup) 时重生.
+    if !dirty.0 && !existing.is_empty() {
+        return;
+    }
+    // despawn 现有行星
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+    dirty.0 = false;
+
+    if !params.planets_enabled {
+        return;
+    }
+
+    let mut rng = ChaCha8Rng::seed_from_u64(params.planet_seed as u64);
+    let max = crate::render::material::MAX_PLANETS as u32;
+    for _ in 0..params.planet_count_target.min(max) {
+        let inclination = rng.gen_range(0.0..PI);
+        let longitude = rng.gen_range(0.0..TAU);
+        let phase = rng.gen_range(0.0..TAU);
+        let radius_factor = rng.gen_range(2.0..4.0);
+        // 颜色: 暖色行星 (橙/红/黄系), 避开蓝色 (易与背景星混淆)
+        let hue = rng.gen_range(0.02..0.13);
+        let color = hsv_to_rgb(hue, rng.gen_range(0.5..0.9), rng.gen_range(0.7..1.0));
+        commands.spawn((
+            OrbitParams {
+                radius_factor,
+                inclination,
+                longitude_of_node: longitude,
+                phase,
+            },
+            Planet {
+                center: Vec3::ZERO, // 首帧由 orbit_system 填
+                radius: rng.gen_range(0.8..1.6),
+                color,
+                emissive: false,
+            },
+        ));
+    }
+}
+
+/// HSV → RGB (h,s,v ∈ [0,1]). 行星颜色用.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Vec3 {
+    let i = (h * 6.0).floor() as i32 % 6;
+    let f = h * 6.0 - (h * 6.0).floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match i {
+        0 => Vec3::new(v, t, p),
+        1 => Vec3::new(q, v, p),
+        2 => Vec3::new(p, v, t),
+        3 => Vec3::new(p, q, v),
+        4 => Vec3::new(t, p, v),
+        _ => Vec3::new(v, p, q),
+    }
 }
 
 #[cfg(test)]
