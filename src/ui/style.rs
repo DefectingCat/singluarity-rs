@@ -13,7 +13,6 @@ pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(255, 140, 66); // #FF8C42
 pub const PANEL_FILL: Color32 = Color32::from_rgb(14, 16, 20);      // #0E1014
 pub const EXTREME_BG: Color32 = Color32::from_rgb(8, 9, 12);        // #08090C
 pub const MUTED_TEXT: Color32 = Color32::from_rgb(140, 140, 140);   // read-only / disabled labels
-pub const DIM_TEXT: Color32 = Color32::from_rgb(110, 110, 110);     // section-disabled headers
 
 /// Text sizes applied over egui's default `Proportional` family. No custom
 /// font binary is embedded (spec non-goal).
