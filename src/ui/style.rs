@@ -1,5 +1,9 @@
 //! egui styling for the control panel. Deep-space cyan/orange theme,
 //! hand-applied over `Visuals::dark()`. See design spec §1.
+//!
+//! Pinned to egui 0.35: the `Shadow` struct packs fields into 8-bit integers,
+//! and the context style API is `set_theme` + `global_style_mut` (not the
+//! `ctx.style()`/`set_style()` of 0.34). See inline comments at each site.
 
 use bevy_egui::egui::{self, Color32, Stroke, TextStyle, Visuals};
 
@@ -35,13 +39,13 @@ pub fn sci_fi_visuals() -> Visuals {
     v.selection.bg_fill = ACCENT_CYAN;
     v.selection.stroke = Stroke::new(1.0, ACCENT_ORANGE);
 
-    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(30, 36, 48);
-    v.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(60, 70, 90));
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(40, 50, 70);
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 220, 255));
+    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(30, 36, 48); // #1E2430
+    v.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(60, 70, 70)); // #3C4646
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(40, 50, 70); // #283246
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 220, 255)); // #C8DCFF
     v.widgets.active.fg_stroke = Stroke::new(1.0, ACCENT_CYAN);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(50, 70, 100);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(40, 46, 60));
+    v.widgets.active.weak_bg_fill = Color32::from_rgb(50, 70, 100); // #324664
+    v.widgets.noninteractive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(40, 46, 60)); // #282E3C
 
     // egui 0.35's `epaint::Shadow` packs its fields into 8-bit integers
     // (`offset: [i8; 2]`, `blur: u8`, `spread: u8`) to keep the struct at 8
