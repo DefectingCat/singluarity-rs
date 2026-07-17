@@ -52,8 +52,10 @@ pub fn apply(p: Preset, params: &mut BlackHoleParams) {
     }
 }
 
-/// Stable hash of a preset's canonical bundle. `Custom` returns 0 (it never
-/// matches any real params state, by construction — see `hashed_fields`).
+/// Stable hash of a preset's canonical bundle. `Custom` returns 0.
+/// (The Custom case is never fed to a `canonical_hash == params_hash`
+/// comparison: `ui_system`'s preset-detection arm only checks
+/// Cinematic | Performance | Web, so the 0 sentinel never risks matching.)
 pub fn canonical_hash(p: Preset) -> u64 {
     match bundle(p) {
         Some(b) => b.hash(),
@@ -90,14 +92,9 @@ impl HashedParams {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.steps.hash(&mut hasher);
         self.render_scale.to_bits().hash(&mut hasher); // f32: hash bit pattern, not value
-        self.bloom_quality.as_u32_().hash(&mut hasher);
+        self.bloom_quality.levels().hash(&mut hasher);
         self.disk_quality.as_u32().hash(&mut hasher);
         self.aa_quality.samples().hash(&mut hasher);
         hasher.finish()
     }
 }
-
-// Local trait adapters: BloomQuality has levels(), DiskQuality has as_u32(),
-// AaQuality has samples(). Unify under one name for hashing.
-trait AsU32ForHash { fn as_u32_(self) -> u32; }
-impl AsU32ForHash for BloomQuality { fn as_u32_(self) -> u32 { self.levels() } }
