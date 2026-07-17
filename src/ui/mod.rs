@@ -64,6 +64,35 @@ fn collapsing(
         });
 }
 
+/// Collapsible section whose header hosts an enable toggle on the right.
+/// Used by Doppler / Jets / Grid / Planets (design §4.1). The body closure
+/// receives the current `enabled` state so it can `add_enabled` its rows.
+///
+/// State persistence is handled by `HeaderResponse::body`, which calls
+/// `CollapsingState::store` internally via `show_body_indented` (see egui
+/// 0.35 `containers/collapsing_header.rs`). `show_header` consumes the
+/// state, so there is no separate `store` call here.
+fn collapsing_with_toggle(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    default_open: bool,
+    enabled: &mut bool,
+    body: impl FnOnce(&mut egui::Ui, bool),
+) {
+    let id = ui.make_persistent_id(id);
+    let state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    state
+        .show_header(ui, |ui| {
+            ui.checkbox(enabled, title);
+        })
+        .body(|ui| {
+            ui.set_width(ui.available_width());
+            body(ui, *enabled);
+        });
+}
+
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
     mut params: ResMut<crate::params::BlackHoleParams>,
