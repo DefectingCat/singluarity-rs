@@ -180,7 +180,7 @@ pub fn ui_system(
             .layer_id(LayerId::background())
             .max_rect(ctx.viewport_rect()),
     );
-    egui::Panel::right("controls")
+    let panel_response = egui::Panel::right("controls")
         .default_size(300.0)
         .size_range(260.0..=400.0)
         .resizable(true)
@@ -253,7 +253,19 @@ pub fn ui_system(
             });
         });
 
-    // egui captures pointer when the cursor is over a window or being
-    // interacted with. MUST stay last — load-bearing for orbit camera.
-    wants.0 = ctx.egui_wants_pointer_input();
+    // Decide whether egui should own the pointer this frame, so the orbit
+    // camera can stand down. We can't rely on `ctx.egui_wants_pointer_input()`:
+    // this SidePanel is rendered on the background layer of a hand-rolled root
+    // `Ui` (the bevy_egui 0.41 single-context pattern) and never registers an
+    // `Area`, so egui's `is_pointer_over_egui()` / `layer_id_at()` return `false`
+    // even while the cursor is squarely over the panel — wheel scroll then leaks
+    // straight through to the camera. Instead we test the pointer against the
+    // panel's own response rect (a deterministic geometric check), and keep
+    // `egui_is_using_pointer()` so dragging a slider/resize-handle still claims
+    // the pointer even if the cursor momentarily leaves the rect.
+    let panel_rect = panel_response.response.rect;
+    let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
+    let over_panel = pointer_pos.is_some_and(|p| panel_rect.contains(p));
+    let using = ctx.egui_is_using_pointer();
+    wants.0 = over_panel || using;
 }
