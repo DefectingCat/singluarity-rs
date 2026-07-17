@@ -5,6 +5,7 @@ pub mod preset;
 use bevy::prelude::*;
 use bevy_egui::egui;
 
+use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
 use crate::ui::style::ACCENT_CYAN;
 
 /// One-shot egui styling. Registered in `EguiPrimaryContextPass` with a
@@ -92,6 +93,44 @@ fn collapsing_with_toggle(
             ui.set_width(ui.available_width());
             body(ui, *enabled);
         });
+}
+
+/// The top preset bar. `current` is the UI-layer state (which preset is
+/// shown as selected); `just_applied` is set for one frame after a preset
+/// is chosen, to skip the Custom-detection hash compare on that frame
+/// (applying a preset changes params; that change must not flip to Custom).
+fn preset_bar(
+    ui: &mut egui::Ui,
+    params: &mut crate::params::BlackHoleParams,
+    current: &mut Preset,
+    just_applied: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label("Preset:");
+        let prev = *current;
+        egui::ComboBox::from_id_salt("preset_combo")
+            .selected_text(format!("{:?}", prev))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(current, Preset::Cinematic, "Cinematic");
+                ui.selectable_value(current, Preset::Performance, "Performance");
+                ui.selectable_value(current, Preset::Web, "Web");
+                ui.selectable_value(current, Preset::Custom, "Custom");
+            });
+        if *current != prev && *current != Preset::Custom {
+            // User picked a concrete preset → apply its bundle.
+            apply(*current, params);
+            *just_applied = true;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Global reset-to-default for all params.
+            if ui.button("↺ all").clicked() {
+                *params = crate::params::BlackHoleParams::default();
+                *current = Preset::Custom;
+                *just_applied = true;
+            }
+        });
+    });
+    ui.separator();
 }
 
 pub fn ui_system(
