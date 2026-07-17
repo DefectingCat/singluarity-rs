@@ -131,7 +131,12 @@ impl Plugin for BlackHolePlugin {
             .add_systems(Update, rebuild_bloom)
             // bevy_egui 0.41 requires UI systems to run inside the egui context
             // pass (fonts/ctx are initialized there); placing them in Update panics.
-            .add_systems(bevy_egui::EguiPrimaryContextPass, crate::ui::ui_system);
+            // setup_egui_style is a one-shot (Local<bool> guard): retries until the
+            // context exists, applies the theme once, never runs again.
+            .add_systems(
+                bevy_egui::EguiPrimaryContextPass,
+                (crate::ui::setup_egui_style, crate::ui::ui_system).chain(),
+            );
     }
 }
 
