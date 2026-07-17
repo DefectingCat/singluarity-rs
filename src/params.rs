@@ -189,7 +189,7 @@ impl Default for BlackHoleParams {
             disk_half_thickness: 0.15,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
-            density_freq: 0.8,
+            density_freq: 2.0,
             // Raised from 1.0: the new density model has no 0.55 floor and decays
             // to 0 at the edges, so a slightly higher multiplier keeps the bulk
             // opaque after per-step integration.

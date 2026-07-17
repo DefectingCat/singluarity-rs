@@ -101,7 +101,7 @@ impl Default for BlackHoleUniforms {
             disk_half_thickness: 0.15,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
-            density_freq: 0.8,
+            density_freq: 2.0,
             density_strength: 1.2,
             arm_count: 2.0,
             arm_tightness: 2.0,
