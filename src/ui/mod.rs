@@ -4,6 +4,23 @@ pub mod preset;
 use bevy::prelude::*;
 use bevy_egui::egui;
 
+/// One-shot egui styling. Registered in `EguiPrimaryContextPass` with a
+/// `Local<bool>` guard so it retries until `ctx_mut()` first succeeds, then
+/// runs exactly once. Per-frame set_style/set_visuals would dirty layout
+/// caches every frame; this avoids that.
+pub fn setup_egui_style(
+    mut contexts: bevy_egui::EguiContexts,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    if let Ok(ctx) = contexts.ctx_mut() {
+        crate::ui::style::setup(&ctx);
+        *done = true;
+    }
+}
+
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
     mut params: ResMut<crate::params::BlackHoleParams>,
