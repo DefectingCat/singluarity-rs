@@ -10,14 +10,15 @@ use crate::params::{AaQuality, BlackHoleParams, BloomQuality, DiskQuality};
 
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Preset {
-    Cinematic,
-    Performance,
-    Web,
+    #[default]
     /// Read-only marker set when any preset-touched field is hand-edited
     /// away from a preset bundle. `apply(Custom, _)` is a no-op.
     Custom,
+    Cinematic,
+    Performance,
+    Web,
 }
 
 /// The exact params each preset writes. `Custom` writes nothing.
