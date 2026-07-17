@@ -1,3 +1,4 @@
+mod sections;
 mod style;
 pub mod preset;
 
