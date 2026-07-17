@@ -8,7 +8,7 @@ use crate::camera::OrbitCamera;
 use crate::params::{
     AaQuality, BlackHoleParams, BloomQuality, DiskColorMode,
 };
-use crate::ui::style::MUTED_TEXT;
+use crate::ui::style::{ACCENT_ORANGE, MUTED_TEXT};
 
 use std::f32::consts::PI;
 
@@ -154,4 +154,100 @@ pub fn section_disk(ui: &mut egui::Ui, params: &mut BlackHoleParams) {
             .fixed_decimals(0)
             .text("Temperature"),
     );
+}
+
+// ============================ Collapsing sections ==========================
+
+pub fn section_turbulence(ui: &mut egui::Ui, params: &mut BlackHoleParams) {
+    use crate::params::DiskQuality;
+    let mut q = params.disk_quality;
+    egui::Grid::new("diskq_grid").num_columns(2).spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("Disk quality");
+            egui::ComboBox::from_id_salt("diskq_combo")
+                .selected_text(format!("{:?}", q))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut q, DiskQuality::Off, "Off");
+                    ui.selectable_value(&mut q, DiskQuality::Low, "Low");
+                    ui.selectable_value(&mut q, DiskQuality::Medium, "Medium");
+                    ui.selectable_value(&mut q, DiskQuality::High, "High");
+                });
+            ui.end_row();
+        });
+    params.disk_quality = q;
+
+    let on = q != DiskQuality::Off;
+    if !on {
+        ui.label(egui::RichText::new(
+            "Disk quality Off → flat zero-thickness disk rendered.",
+        ).small().color(ACCENT_ORANGE));
+    }
+    egui::Grid::new("turb_grid").num_columns(2).spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            ui.add_enabled(on, egui::Slider::new(&mut params.disk_half_thickness, 0.02..=0.3).text("Thickness (H/R)"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.filament_freq, 0.2..=4.0).text("Filament frequency"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.filament_sharpness, 1.0..=6.0).text("Filament sharpness"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.density_freq, 0.2..=3.0).text("Density frequency"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.density_strength, 0.0..=2.0).text("Density strength"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.arm_count, 0.0..=6.0).text("Arm count"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.arm_tightness, 0.0..=6.0).text("Arm tightness"));
+            ui.end_row();
+            ui.add_enabled(on, egui::Slider::new(&mut params.arm_strength, 0.0..=1.0).text("Arm strength"));
+            ui.end_row();
+        });
+}
+
+pub fn section_doppler(ui: &mut egui::Ui, params: &mut BlackHoleParams, enabled: bool) {
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.doppler_strength, 0.0..=3.0).text("Strength"));
+}
+
+pub fn section_jets(ui: &mut egui::Ui, params: &mut BlackHoleParams, enabled: bool) {
+    // Mirror the shader's spin gate: jets render only for χ ≥ 0.05.
+    let jets_renderable = params.spin >= 0.05;
+    if enabled && !jets_renderable {
+        ui.label(egui::RichText::new(
+            "Jets need χ ≥ 0.05 (Blandford-Znajek is spin-powered).",
+        ).small().color(ACCENT_ORANGE));
+    }
+    ui.add_enabled(
+        enabled && jets_renderable,
+        egui::Slider::new(&mut params.jets_strength, 0.0..=3.0).text("Strength"),
+    );
+}
+
+pub fn section_planets(ui: &mut egui::Ui, params: &mut BlackHoleParams, enabled: bool) {
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.planet_count_target, 0..=8).text("Count"));
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.planet_radius_factor, 1.1..=2.0).prefix("× ").text("Radius (× disk outer)"));
+    ui.add_enabled(
+        enabled,
+        egui::Label::new(
+            egui::RichText::new(format!(
+                "Orbit r = {:.2} (disk outer: {:.1})",
+                params.planet_radius_factor * params.disk_outer,
+                params.disk_outer
+            )).color(MUTED_TEXT),
+        ),
+    );
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.planet_seed, 0..=1000).text("Seed"));
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.planet_time_scale, 1.0..=200.0).text("Time scale"));
+}
+
+pub fn section_background(ui: &mut egui::Ui, params: &mut BlackHoleParams) {
+    egui::Grid::new("bg_grid").num_columns(2).spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            row(ui, "Star intensity", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.star_intensity, 0.0..=3.0).fixed_decimals(2)));
+            row(ui, "Skybox", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.skybox_intensity, 0.0..=3.0).fixed_decimals(2)));
+        });
+}
+
+pub fn section_grid(ui: &mut egui::Ui, params: &mut BlackHoleParams, enabled: bool) {
+    ui.add_enabled(enabled, egui::Slider::new(&mut params.grid_density, 0.1..=4.0).text("Density"));
 }
