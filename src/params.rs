@@ -212,11 +212,12 @@ impl Default for BlackHoleParams {
             // at 2× by default — enough to soften the rings — with High (4×)
             // available in the UI for a fully smooth Gargantua look.
             aa_quality: if cfg!(target_arch = "wasm32") { AaQuality::Off } else { AaQuality::Low },
-            // Planets: 6 颗, k=2.5 (r ∈ [1.25, 7.5], 横跨强场区),
-            // 种子 42, time_scale 50× (Ω_LT 在 r=8 转一圈 ~25 min, 放大才可见).
+            // Planets: 6 颗. 半径基准是 disk_outer (默认 25), factor 1.3 →
+            // r ≈ 32.5, 稳定在盘外 (盘范围 [isco, 25]). 早期用 ISCO 作基准会让
+            // 行星落进盘的径向范围. 种子 42, time_scale 50× (进动慢, 需放大).
             planets_enabled: true,
             planet_count_target: 6,
-            planet_radius_factor: 2.5,
+            planet_radius_factor: 1.3,
             planet_seed: 42,
             planet_time_scale: 50.0,
         }

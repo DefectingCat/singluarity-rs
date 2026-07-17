@@ -33,17 +33,21 @@ pub struct OrbitParams {
 #[derive(Resource, Default)]
 pub struct PlanetSystemDirty(pub bool);
 
-/// 由轨道根数 + 当前 (模拟)时间 + 自旋, 计算行星世界空间位置.
+/// 由轨道根数 + 当前 (模拟)时间 + 自旋 + 盘外半径, 计算行星世界空间位置.
 /// 纯函数: 无 Bevy 依赖, 可独立测试.
 ///
 /// 物理:
-/// - r = k · kerr_isco(χ)
+/// - r = radius_factor · disk_outer  (绑定盘外缘, 保证行星在盘外)
 /// - Ω_φ = kerr_orbital_frequency(r, χ)  (轨道角速度)
 /// - Ω_LT = kerr_nodal_precession(r, χ)  (轨道面绕 Y 轴的进动率)
 /// 轨道面基 (u, v) 由 inclination + longitude_of_node 构造, 然后绕 Y 轴
 /// 整体旋转 Ω_LT·t (Lense-Thirring 进动).
-pub fn orbit_position(orbit: &OrbitParams, t: f32, chi: f32) -> Vec3 {
-    let r = orbit.radius_factor * crate::physics::kerr_isco(chi);
+///
+/// 注: 半径基准是 disk_outer 而非 kerr_isco(χ). 早期版本用 ISCO 作基准,
+/// 但盘从 ISCO 向外延伸到 disk_outer (默认 25), 用 ISCO 会让行星落在
+/// 盘的径向范围内 (与盘重叠/被盘淹没). disk_outer 保证行星永远在盘外.
+pub fn orbit_position(orbit: &OrbitParams, t: f32, chi: f32, disk_outer: f32) -> Vec3 {
+    let r = orbit.radius_factor * disk_outer;
     let omega_phi = crate::physics::kerr_orbital_frequency(r, chi);
     let omega_lt = crate::physics::kerr_nodal_precession(r, chi);
 
@@ -86,7 +90,7 @@ pub fn orbit_system(
     // time_scale 放大模拟时间, 让慢进动在合理时间内可见 (Ω_LT 在 r=8 转一圈 ~25 min)
     let t = time.elapsed_secs() * params.planet_time_scale;
     for (orbit, mut planet) in &mut query {
-        planet.center = orbit_position(orbit, t, params.spin);
+        planet.center = orbit_position(orbit, t, params.spin, params.disk_outer);
     }
 }
 
@@ -172,10 +176,11 @@ pub fn spawn_planet_system(
         let inclination = rng.gen_range(0.0..PI);
         let longitude = rng.gen_range(0.0..TAU);
         let phase = rng.gen_range(0.0..TAU);
-        // 半径因子以 UI 的 planet_radius_factor 为中心 ±0.75 散布, 既让滑条
-        // 真正控制轨道尺度, 又保留 per-planet 半径多样性 (避免全同半径).
-        // 滑条范围 1.5..=5.0, 散布后实际 k ∈ [0.75, 5.75], 钳到 ISCO 外.
-        let radius_factor = (params.planet_radius_factor + rng.gen_range(-0.75..0.75)).max(1.0);
+        // 半径因子 = planet_radius_factor ± 0.25 (per-planet 散布).
+        // orbit_position 用 r = radius_factor · disk_outer, 所以这个因子是
+        // "盘外缘的倍数": 1.0 = 紧贴盘外, 1.5 = 盘外 50%. 默认滑条 1.3 让行星
+        // 稳定在盘外, 散布保留 per-planet 半径多样性. 钳到 1.05 以上保证始终盘外.
+        let radius_factor = (params.planet_radius_factor + rng.gen_range(-0.25..0.25)).max(1.05);
         // 颜色: 暖色行星 (橙/红/黄系), 避开蓝色 (易与背景星混淆)
         let hue = rng.gen_range(0.02..0.13);
         let color = hsv_to_rgb(hue, rng.gen_range(0.5..0.9), rng.gen_range(0.7..1.0));
@@ -219,17 +224,18 @@ mod tests {
 
     #[test]
     fn orbit_position_radius_is_preserved() {
-        // 不管时间/相位, 行星到原点距离应恒等于 r = k·isco(χ)
+        // 不管时间/相位, 行星到原点距离应恒等于 r = radius_factor · disk_outer
         let orbit = OrbitParams {
-            radius_factor: 2.5,
+            radius_factor: 1.3,
             inclination: 0.7,
             longitude_of_node: 1.3,
             phase: 0.5,
         };
         let chi = 0.8;
-        let expected_r = 2.5 * crate::physics::kerr_isco(chi);
+        let disk_outer = 25.0;
+        let expected_r = 1.3 * disk_outer;
         for t in [0.0_f32, 1.0, 5.5, 100.0] {
-            let pos = orbit_position(&orbit, t, chi);
+            let pos = orbit_position(&orbit, t, chi, disk_outer);
             let dist = pos.length();
             assert!(
                 (dist - expected_r).abs() < 1e-4,
@@ -243,13 +249,13 @@ mod tests {
     fn orbit_position_zero_spin_keeps_equatorial_plane() {
         // χ=0: 无进动, 倾角 0 (赤道面) 的行星应严格在 y=0 平面
         let orbit = OrbitParams {
-            radius_factor: 3.0,
+            radius_factor: 1.3,
             inclination: 0.0,
             longitude_of_node: 0.0,
             phase: 0.0,
         };
         for t in [0.0_f32, 1.0, 10.0] {
-            let pos = orbit_position(&orbit, t, 0.0);
+            let pos = orbit_position(&orbit, t, 0.0, 25.0);
             assert!(pos.y.abs() < 1e-5, "χ=0 equatorial orbit should stay in y=0 plane at t={}", t);
         }
     }
@@ -258,13 +264,13 @@ mod tests {
     fn orbit_position_advances_with_time() {
         // 不同时间应给不同位置 (除非极端巧合)
         let orbit = OrbitParams {
-            radius_factor: 3.0,
+            radius_factor: 1.3,
             inclination: 0.5,
             longitude_of_node: 0.0,
             phase: 0.0,
         };
-        let p0 = orbit_position(&orbit, 0.0, 0.5);
-        let p1 = orbit_position(&orbit, 1.0, 0.5);
+        let p0 = orbit_position(&orbit, 0.0, 0.5, 25.0);
+        let p1 = orbit_position(&orbit, 1.0, 0.5, 25.0);
         assert!((p0 - p1).length() > 0.01, "planet should move over time");
     }
 }

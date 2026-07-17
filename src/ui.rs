@@ -69,9 +69,8 @@ pub fn ui_system(
                         );
                         ui.checkbox(&mut params.planets_enabled, "Enable");
                         ui.add(egui::Slider::new(&mut params.planet_count_target, 0..=8).text("Count"));
-                        ui.add(egui::Slider::new(&mut params.planet_radius_factor, 1.5..=5.0).text("Radius factor k"));
-                        let isco = crate::physics::kerr_isco(params.spin);
-                        ui.label(format!("ISCO: {:.3} → r = {:.3}", isco, params.planet_radius_factor * isco));
+                        ui.add(egui::Slider::new(&mut params.planet_radius_factor, 1.1..=2.0).text("Radius (× disk outer)"));
+                        ui.label(format!("Orbit r = {:.2} (disk outer: {:.1})", params.planet_radius_factor * params.disk_outer, params.disk_outer));
                         ui.add(egui::Slider::new(&mut params.planet_seed, 0..=1000).text("Seed"));
                         ui.add(egui::Slider::new(&mut params.planet_time_scale, 1.0..=200.0).text("Time scale"));
                         let curr = (
