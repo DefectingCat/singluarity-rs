@@ -4,6 +4,8 @@ pub mod preset;
 use bevy::prelude::*;
 use bevy_egui::egui;
 
+use crate::ui::style::ACCENT_CYAN;
+
 /// One-shot egui styling. Registered in `EguiPrimaryContextPass` with a
 /// `Local<bool>` guard so it retries until `ctx_mut()` first succeeds, then
 /// runs exactly once. Per-frame set_style/set_visuals would dirty layout
@@ -19,6 +21,47 @@ pub fn setup_egui_style(
         crate::ui::style::setup(&ctx);
         *done = true;
     }
+}
+
+/// An always-open framed card. Title in cyan `RichText::strong().small()`.
+/// Used for the 4 most-tuned groups (Camera / Black Hole / Disk / Quality).
+fn group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style())
+        .inner_margin(8.0)
+        .corner_radius(6.0)
+        .stroke(egui::Stroke::new(
+            1.0,
+            ui.visuals().window_stroke.color,
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .small()
+                    .color(ACCENT_CYAN),
+            );
+            ui.add_space(2.0);
+            body(ui);
+        });
+}
+
+/// A collapsible section (`default_open` controls initial state).
+/// Used for the 6 secondary groups. The body closure is only invoked when open.
+fn collapsing(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    default_open: bool,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    egui::CollapsingHeader::new(title)
+        .default_open(default_open)
+        .id_salt(id)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            body(ui);
+        });
 }
 
 pub fn ui_system(
