@@ -6,7 +6,7 @@ use bevy_egui::egui;
 
 use crate::camera::OrbitCamera;
 use crate::params::{
-    AaQuality, BlackHoleParams, BloomQuality,
+    AaQuality, BlackHoleParams, BloomQuality, DiskColorMode,
 };
 use crate::ui::style::MUTED_TEXT;
 
@@ -115,5 +115,43 @@ pub fn section_quality(ui: &mut egui::Ui, params: &mut BlackHoleParams) {
     ui.label(
         egui::RichText::new("MSAA is decorative on a fullscreen shader (no geometry edges).")
             .small().color(MUTED_TEXT),
+    );
+}
+
+pub fn section_disk(ui: &mut egui::Ui, params: &mut BlackHoleParams) {
+    egui::Grid::new("disk_grid").num_columns(2).spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            row(ui, "Outer radius", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.disk_outer, 6.0..=50.0)
+                    .suffix(" r_g").fixed_decimals(1)));
+            row(ui, "Tilt", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.disk_tilt, 0.0..=PI)
+                    .suffix(" rad").fixed_decimals(2)));
+            row(ui, "Brightness", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.disk_brightness, 0.0..=3.0).fixed_decimals(2)));
+            row(ui, "Rotation", |ui| ui.add_sized([140.0, 16.0],
+                egui::Slider::new(&mut params.disk_rotation_speed, 0.0..=3.0).fixed_decimals(2)));
+            // Color model combobox.
+            let mut cm = params.disk_color_mode;
+            ui.label("Color model");
+            egui::ComboBox::from_id_salt("disk_color_combo")
+                .selected_text(format!("{:?}", cm))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut cm, DiskColorMode::Gradient, "Gradient");
+                    ui.selectable_value(&mut cm, DiskColorMode::Blackbody, "Blackbody");
+                });
+            ui.end_row();
+            params.disk_color_mode = cm;
+        });
+    // Temperature only meaningful in Blackbody mode — disable (not hide) so
+    // the user sees their value while briefly in Gradient.
+    let blackbody = params.disk_color_mode == DiskColorMode::Blackbody;
+    ui.add_enabled(
+        blackbody,
+        egui::Slider::new(&mut params.disk_temp, 1000.0..=50000.0)
+            .suffix(" K")
+            .logarithmic(true)
+            .fixed_decimals(0)
+            .text("Temperature"),
     );
 }
