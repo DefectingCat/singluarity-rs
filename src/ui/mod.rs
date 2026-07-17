@@ -1,4 +1,5 @@
 mod style;
+pub mod preset;
 
 use bevy::prelude::*;
 use bevy_egui::egui;

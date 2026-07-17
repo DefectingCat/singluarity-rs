@@ -1,14 +1,12 @@
 use bevy::prelude::*;
 use bevy::window::WindowPlugin;
 
+// The bin consumes the lib crate's modules; it does NOT redeclare them.
+// src/lib.rs owns every file-level module (camera/params/physics/render/
+// scene/ui/web), so we import what main() needs from the lib root.
+use singularity_rs::render::BlackHolePlugin;
 #[cfg(target_arch = "wasm32")]
-mod web;
-mod render;
-mod camera;
-mod params;
-mod ui;
-mod scene;
-mod physics;
+use singularity_rs::web;
 
 fn main() {
     // On web, abort startup if WebGPU isn't available and show a message.
@@ -50,6 +48,6 @@ fn main() {
                 // Dropping it removes that noise and shrinks the wasm binary.
                 .disable::<bevy::audio::AudioPlugin>(),
         )
-        .add_plugins(render::BlackHolePlugin)
+        .add_plugins(BlackHolePlugin)
         .run();
 }
