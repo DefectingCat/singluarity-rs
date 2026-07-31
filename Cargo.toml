@@ -10,6 +10,14 @@ path = "src/lib.rs"
 [dependencies]
 bevy = "0.19"
 bevy_egui = "0.41"
+# Embeds the `assets/` tree (the WGSL shaders) into the binary so release
+# builds are a single self-contained executable — no `assets/` folder needed
+# next to it at runtime (the cause of "Path not found: .../assets/shaders/*.wgsl"
+# when running the bare binary). Only wired up in `main.rs` under
+# `#[cfg(not(debug_assertions))]`: debug keeps loading assets from disk so a
+# `.wgsl` edit applies instantly without recompiling Rust. 0.16 tracks Bevy 0.19
+# (see the crate's Bevy-compatibility table).
+bevy_embedded_assets = "0.16"
 # Deterministic PRNG for planet seeding (ChaCha8Rng). `rand` is a transitive
 # dep via bevy_math but not declared directly; `rand_chacha` ships ChaCha8Rng.
 # Pinned to 0.8/0.3 (LTS, API-compatible with the Bevy 0.19 ecosystem).

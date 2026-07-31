@@ -10,6 +10,7 @@ A real-time Kerr (spinning) black-hole renderer in Bevy 0.19. One binary, two ta
 - `edition = "2024"`. No pinned toolchain file; tested on stable 1.96.
 - Release profiles (`Cargo.toml`): desktop `[profile.release]` uses `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = "symbols"`. Web `[profile.wasm-release]` inherits release and overrides `opt-level = "z"` for binary size. `trunk build --release` picks up `wasm-release`.
 - `target/` and `dist/` are gitignored. `dist/` may hold a ~200 MB wasm build locally — never commit it.
+- **Release builds embed the `assets/` tree into the binary** via `bevy_embedded_assets` 0.16 (`PluginMode::ReplaceAndFallback`, wired in `main.rs` under `#[cfg(not(debug_assertions))]`). The shipped `singularity-rs` executable is self-contained — no `assets/` folder needs to sit next to it (this is why a bare `./singularity-rs` no longer logs `Path not found: .../assets/shaders/*.wgsl`). Shader load sites in `render/material.rs` are unchanged: the mode keeps the same default asset paths and only falls back to disk for assets not embedded. **Debug builds skip embedding** on purpose so editing a `.wgsl` and re-running `cargo run` reflects instantly without a Rust recompile.
 
 ## Test
 
