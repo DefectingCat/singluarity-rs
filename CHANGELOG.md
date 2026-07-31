@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-31
+
+### Added
+- Complete UI panel redesign featuring a collapsible right side-panel chassis, sci-fi deep-space cyan/orange styling, global quality presets (Default, High Quality, Performance, Cinematic, Custom), and toggle shortcut (`Ctrl/Cmd+H`).
+- Asset loading state management via `bevy_asset_loader` and `AppState`, with an in-engine egui HUD progress card during initial loading.
+- Web HTML/CSS preloader HUD with smooth DOM fade-out once WebGPU rendering is initialized.
+- Embedded release assets using `bevy_embedded_assets` for single self-contained executable desktop distribution.
+- Application packaging configuration for `cargo-packager` with platform icons and binary metadata.
+- Automated GitHub Actions CI workflow (formatting, clippy, tests, desktop & WebGPU builds) and release deployment pipeline (`release.yml`).
+
+### Fixed
+- Fixed mouse scroll-wheel passthrough to orbit camera when interacting with egui UI panels.
+- Resolved code style and clippy lints for Rust 2024 edition compliance.
+
 ## [0.1.0] - 2026-07-31
 
 ### Added
