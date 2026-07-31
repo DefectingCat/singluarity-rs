@@ -1,6 +1,7 @@
 mod sections;
 mod style;
 pub mod preset;
+pub mod loading;
 
 use bevy::prelude::*;
 use bevy_egui::egui;

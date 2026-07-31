@@ -5,6 +5,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::storage::ShaderBuffer;
 use bevy::sprite_render::Material2dPlugin;
+use bevy_asset_loader::prelude::*;
+use crate::state::{AppState, ShaderAssets, LoadingProgress};
 
 use super::material::BlackHoleMaterial;
 
@@ -93,7 +95,14 @@ pub struct BlackHolePlugin;
 
 impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::camera::OrbitCamera>()
+        app.init_state::<AppState>()
+            .init_resource::<LoadingProgress>()
+            .add_loading_state(
+                LoadingState::new(AppState::Loading)
+                    .continue_to_state(AppState::Running)
+                    .load_collection::<ShaderAssets>(),
+            )
+            .init_resource::<crate::camera::OrbitCamera>()
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
             .init_resource::<crate::scene::planets::PlanetSystemDirty>()
@@ -102,20 +111,21 @@ impl Plugin for BlackHolePlugin {
             .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
-            // The bloom pipeline spawns 7 Camera2d entities (offscreen + brightpass
-            // + 4 blur + composite). bevy_egui's auto-context assigns PrimaryEguiContext
-            // to the FIRST Added<Camera> — the offscreen camera, which renders to an
-            // Rgba16Float Image. egui's pipeline expects the window's Rgba8UnormSrgb
-            // surface → format mismatch crash. Disable auto-assignment and explicitly
-            // tag the composite (window) camera with PrimaryEguiContext (see spawn).
-            // Runs in PreStartup, before setup_primary_egui_context_system.
             .add_systems(bevy::prelude::PreStartup, disable_egui_auto_context)
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_planet_system)
             .add_systems(
                 Update,
+                update_loading_progress.run_if(in_state(AppState::Loading)),
+            )
+            .add_systems(
+                OnEnter(AppState::Running),
+                on_enter_running,
+            )
+            .add_systems(
+                Update,
                 (
-                    crate::camera::orbit_controller,
+                    crate::camera::orbit_controller.run_if(in_state(AppState::Running)),
                     mirror_params,
                     resize_offscreen,
                     nudge_camera,
@@ -129,15 +139,38 @@ impl Plugin for BlackHolePlugin {
             )
             .add_systems(Update, crate::scene::planets::upload_planets)
             .add_systems(Update, rebuild_bloom)
-            // bevy_egui 0.41 requires UI systems to run inside the egui context
-            // pass (fonts/ctx are initialized there); placing them in Update panics.
-            // setup_egui_style is a one-shot (Local<bool> guard): retries until the
-            // context exists, applies the theme once, never runs again.
             .add_systems(
                 bevy_egui::EguiPrimaryContextPass,
-                (crate::ui::setup_egui_style, crate::ui::ui_system).chain(),
+                (
+                    crate::ui::setup_egui_style,
+                    crate::ui::loading::loading_ui_system
+                        .run_if(in_state(AppState::Loading)),
+                    crate::ui::ui_system
+                        .run_if(in_state(AppState::Running)),
+                ),
             );
     }
+}
+
+fn update_loading_progress(
+    mut progress: ResMut<LoadingProgress>,
+) {
+    progress.warmup_frames += 1;
+    let frames = progress.warmup_frames;
+    if frames < 5 {
+        progress.progress = (frames as f32 / 5.0) * 0.4;
+        progress.status = "Loading WGSL Shader Assets...".to_string();
+    } else if frames < 15 {
+        progress.progress = 0.4 + ((frames - 5) as f32 / 10.0) * 0.45;
+        progress.status = "Initializing WebGPU Render Pipeline...".to_string();
+    } else {
+        progress.progress = 0.95;
+        progress.status = "Warming up GPU Pipeline...".to_string();
+    }
+}
+
+fn on_enter_running() {
+    crate::web::remove_loading_screen();
 }
 
 #[allow(clippy::too_many_arguments)]

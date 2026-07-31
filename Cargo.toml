@@ -27,6 +27,7 @@ path = "src/lib.rs"
 [dependencies]
 bevy = "0.19"
 bevy_egui = "0.41"
+bevy_asset_loader = "0.27"
 # Embeds the `assets/` tree (the WGSL shaders) into the binary so release
 # builds are a single self-contained executable — no `assets/` folder needed
 # next to it at runtime (the cause of "Path not found: .../assets/shaders/*.wgsl"

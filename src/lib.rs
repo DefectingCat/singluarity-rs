@@ -8,5 +8,5 @@ pub mod physics;
 pub mod render;
 pub mod scene;
 pub mod ui;
-#[cfg(target_arch = "wasm32")]
+pub mod state;
 pub mod web;
