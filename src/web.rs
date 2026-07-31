@@ -40,3 +40,17 @@ pub fn show_fallback_message() {
         }
     }
 }
+#[cfg(target_arch = "wasm32")]
+pub fn remove_loading_screen() {
+    if let Some(window) = web_sys::window() {
+        if let Some(document) = window.document() {
+            if let Some(overlay) = document.get_element_by_id("loading-overlay") {
+                let class_list = overlay.class_list();
+                class_list.add_1("fade-out").ok();
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_loading_screen() {}
