@@ -8,6 +8,13 @@ identifier = "plus.rua.singularity"
 product-name = "Singularity"
 before-packaging-command = "cargo build --release"
 out-dir = "./target/packager"
+icons = [
+  "assets/icons/32x32.png",
+  "assets/icons/128x128.png",
+  "assets/icons/512x512.png",
+  "assets/icons/icon.icns"
+]
+
 
 [[package.metadata.packager.binaries]]
 path = "singularity-rs"
