@@ -3,6 +3,16 @@ name = "singularity-rs"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.packager]
+identifier = "plus.rua.singularity"
+product-name = "Singularity"
+before-packaging-command = "cargo build --release"
+out-dir = "./target/packager"
+
+[[package.metadata.packager.binaries]]
+path = "singularity-rs"
+main = true
+
 [lib]
 name = "singularity_rs"
 path = "src/lib.rs"
