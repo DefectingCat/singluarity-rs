@@ -27,7 +27,7 @@ jobs:
           changelog: CHANGELOG.md
 
   upload-desktop-assets:
-    name: Build & Upload Desktop Binary (${{ matrix.target }})
+    name: Build & Upload Desktop App (${{ matrix.target }})
     needs: create-release
     runs-on: ${{ matrix.os }}
     permissions:
@@ -48,22 +48,47 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Linux system dependencies for Bevy
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies for Bevy and Packaging
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
             libasound2-dev \
-            libudev-dev
+            libudev-dev \
+            squashfs-tools
 
-      - name: Build and upload release binary
-        uses: taiki-e/upload-rust-binary-action@v1
+      - name: Setup cargo-packager
+        uses: crabnebula-dev/cargo-packager-action@v1
+
+      - name: Package Desktop Application
+        run: cargo packager --release --target ${{ matrix.target }}
+
+      - name: Prepare macOS .app zip archive
+        if: runner.os == 'macOS'
+        run: |
+          cd target/packager
+          zip -r "Singularity_${{ matrix.target }}.app.zip" Singularity.app
+
+      - name: Upload Desktop App Packages to Release
+        uses: softprops/action-gh-release@v2
         with:
-          bin: singularity-rs
-          target: ${{ matrix.target }}
-          archive: singularity-rs-$target
-
+          files: |
+            target/packager/*.dmg
+            target/packager/*.app.zip
+            target/packager/*.deb
+            target/packager/*.AppImage
+            target/packager/*.exe
+            target/packager/*.msi
+          fail_on_unmatched_files: false
   upload-web-assets:
     name: Build & Upload Web Asset
     needs: create-release
