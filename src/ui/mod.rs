@@ -105,6 +105,7 @@ fn preset_bar(
     params: &mut crate::params::BlackHoleParams,
     current: &mut Preset,
     just_applied: &mut bool,
+    collapsed: &mut bool,
 ) {
     ui.horizontal(|ui| {
         ui.label("Preset:");
@@ -123,6 +124,9 @@ fn preset_bar(
             *just_applied = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("▶").on_hover_text("Collapse panel (Tab / H)").clicked() {
+                *collapsed = true;
+            }
             // Global reset-to-default for all params.
             if ui.button("↺ all").clicked() {
                 *params = crate::params::BlackHoleParams::default();
@@ -143,6 +147,7 @@ pub fn ui_system(
     mut current_preset: Local<Preset>,
     mut just_applied: Local<bool>,
     mut last_hash: Local<Option<u64>>,
+    mut panel_collapsed: Local<bool>,
 ) {
     // Local<Preset> defaults to Custom (Preset::default()).
     // Local<Option<u64>> defaults to None — first-frame sentinel.
@@ -151,6 +156,11 @@ pub fn ui_system(
         wants.0 = false;
         return;
     };
+    if !ctx.egui_wants_keyboard_input()
+        && ctx.input(|i| i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::Tab))
+    {
+        *panel_collapsed = !*panel_collapsed;
+    }
 
     // --- Custom-detection (skip on the frame a preset was just applied) ---
     let now_hash = params_hash(&params);
@@ -180,13 +190,33 @@ pub fn ui_system(
             .layer_id(LayerId::background())
             .max_rect(ctx.viewport_rect()),
     );
-    let panel_response = egui::Panel::right("controls")
-        .default_size(300.0)
-        .size_range(260.0..=400.0)
-        .resizable(true)
-        .show(&mut root_ui, |ui| {
-            // Top bar (fixed).
-            preset_bar(ui, &mut params, &mut current_preset, &mut just_applied);
+    let panel_response = if *panel_collapsed {
+        egui::Panel::right("controls_collapsed")
+            .resizable(false)
+            .show(&mut root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("◀ Controls")
+                        .on_hover_text("Expand panel (Tab / H)")
+                        .clicked()
+                    {
+                        *panel_collapsed = false;
+                    }
+                });
+            })
+    } else {
+        egui::Panel::right("controls")
+            .default_size(300.0)
+            .size_range(260.0..=400.0)
+            .resizable(true)
+            .show(&mut root_ui, |ui| {
+                // Top bar (fixed).
+                preset_bar(
+                    ui,
+                    &mut params,
+                    &mut current_preset,
+                    &mut just_applied,
+                    &mut panel_collapsed,
+                );
 
             // Section stack (scrolls).
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -251,7 +281,8 @@ pub fn ui_system(
                     |ui, en| section_grid(ui, &mut params, en));
                 params.grid_enabled = en;
             });
-        });
+            })
+    };
 
     // Decide whether egui should own the pointer this frame, so the orbit
     // camera can stand down. We can't rely on `ctx.egui_wants_pointer_input()`:
