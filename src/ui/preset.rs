@@ -27,16 +27,25 @@ fn bundle(p: Preset) -> Option<HashedParams> {
     // Cinematic = desktop default, Web = wasm default, Performance = a low tier.
     Some(match p {
         Preset::Cinematic => HashedParams {
-            steps: 300, render_scale: 0.75,
-            bloom_quality: BloomQuality::High, disk_quality: DiskQuality::High, aa_quality: AaQuality::High,
+            steps: 300,
+            render_scale: 0.75,
+            bloom_quality: BloomQuality::High,
+            disk_quality: DiskQuality::High,
+            aa_quality: AaQuality::High,
         },
         Preset::Performance => HashedParams {
-            steps: 150, render_scale: 0.5,
-            bloom_quality: BloomQuality::Low, disk_quality: DiskQuality::Low, aa_quality: AaQuality::Off,
+            steps: 150,
+            render_scale: 0.5,
+            bloom_quality: BloomQuality::Low,
+            disk_quality: DiskQuality::Low,
+            aa_quality: AaQuality::Off,
         },
         Preset::Web => HashedParams {
-            steps: 200, render_scale: 0.5,
-            bloom_quality: BloomQuality::Low, disk_quality: DiskQuality::Low, aa_quality: AaQuality::Off,
+            steps: 200,
+            render_scale: 0.5,
+            bloom_quality: BloomQuality::Low,
+            disk_quality: DiskQuality::Low,
+            aa_quality: AaQuality::Off,
         },
         Preset::Custom => return None,
     })

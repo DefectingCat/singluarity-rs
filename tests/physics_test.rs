@@ -11,14 +11,22 @@ fn public_bcrt_constant_is_correct() {
 fn kerr_isco_at_zero_is_schwarzschild() {
     // spin=0 → ISCO = 6M = 3 Rs (Rs=1).
     let isco = physics::kerr_isco(0.0);
-    assert!((isco - 3.0).abs() < 1e-3, "spin=0 ISCO should be 3.0, got {}", isco);
+    assert!(
+        (isco - 3.0).abs() < 1e-3,
+        "spin=0 ISCO should be 3.0, got {}",
+        isco
+    );
 }
 
 #[test]
 fn kerr_isco_at_extremal_is_half_rs() {
     // spin=1 → ISCO = M = Rs/2 = 0.5.
     let isco = physics::kerr_isco(1.0);
-    assert!((isco - 0.5).abs() < 1e-3, "spin=1 ISCO should be 0.5, got {}", isco);
+    assert!(
+        (isco - 0.5).abs() < 1e-3,
+        "spin=1 ISCO should be 0.5, got {}",
+        isco
+    );
 }
 
 #[test]
@@ -34,14 +42,22 @@ fn kerr_isco_is_monotonically_decreasing() {
 fn kerr_horizon_at_zero_is_rs() {
     // spin=0 → r+ = Rs = 1.0.
     let r = physics::kerr_horizon(0.0);
-    assert!((r - 1.0).abs() < 1e-3, "spin=0 horizon should be 1.0, got {}", r);
+    assert!(
+        (r - 1.0).abs() < 1e-3,
+        "spin=0 horizon should be 1.0, got {}",
+        r
+    );
 }
 
 #[test]
 fn kerr_horizon_at_extremal_is_half_rs() {
     // spin=1 → r+ = M = 0.5.
     let r = physics::kerr_horizon(1.0);
-    assert!((r - 0.5).abs() < 1e-3, "spin=1 horizon should be 0.5, got {}", r);
+    assert!(
+        (r - 0.5).abs() < 1e-3,
+        "spin=1 horizon should be 0.5, got {}",
+        r
+    );
 }
 
 #[test]
@@ -61,7 +77,11 @@ fn kerr_bending_accel_degenerates_to_schwarzschild_at_zero_spin() {
     let schw = physics::bending_accel(pos, dir);
     let kerr = physics::kerr_bending_accel(pos, dir, 0.0);
     let diff = (schw - kerr).length();
-    assert!(diff < 1e-6, "spin=0 Kerr should match Schwarzschild; diff = {}", diff);
+    assert!(
+        diff < 1e-6,
+        "spin=0 Kerr should match Schwarzschild; diff = {}",
+        diff
+    );
 }
 
 #[test]
@@ -72,7 +92,11 @@ fn kerr_bending_accel_nonzero_off_axis_at_nonzero_spin() {
     let schw = physics::bending_accel(pos, dir);
     let kerr = physics::kerr_bending_accel(pos, dir, 0.8);
     let diff = (schw - kerr).length();
-    assert!(diff > 1e-4, "spin=0.8 Kerr should differ from Schwarzschild; diff = {}", diff);
+    assert!(
+        diff > 1e-4,
+        "spin=0.8 Kerr should differ from Schwarzschild; diff = {}",
+        diff
+    );
 }
 
 // ---- Loop-level CPU ↔ shader mirror tests (adaptive RK45 + Kerr) ----

@@ -1,3 +1,4 @@
+use crate::state::{AppState, LoadingProgress, ShaderAssets};
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::Image;
@@ -6,7 +7,6 @@ use bevy::render::render_resource::TextureFormat;
 use bevy::render::storage::ShaderBuffer;
 use bevy::sprite_render::Material2dPlugin;
 use bevy_asset_loader::prelude::*;
-use crate::state::{AppState, ShaderAssets, LoadingProgress};
 
 use super::material::BlackHoleMaterial;
 
@@ -108,7 +108,9 @@ impl Plugin for BlackHolePlugin {
             .init_resource::<crate::scene::planets::PlanetSystemDirty>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::CompositeMaterial>::default())
-            .add_plugins(Material2dPlugin::<crate::render::material::BrightPassMaterial>::default())
+            .add_plugins(Material2dPlugin::<
+                crate::render::material::BrightPassMaterial,
+            >::default())
             .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(bevy::prelude::PreStartup, disable_egui_auto_context)
@@ -118,10 +120,7 @@ impl Plugin for BlackHolePlugin {
                 Update,
                 update_loading_progress.run_if(in_state(AppState::Loading)),
             )
-            .add_systems(
-                OnEnter(AppState::Running),
-                on_enter_running,
-            )
+            .add_systems(OnEnter(AppState::Running), on_enter_running)
             .add_systems(
                 Update,
                 (
@@ -134,8 +133,7 @@ impl Plugin for BlackHolePlugin {
             .add_systems(Update, crate::scene::planets::spawn_planet_system)
             .add_systems(
                 Update,
-                crate::scene::planets::orbit_system
-                    .before(crate::scene::planets::upload_planets),
+                crate::scene::planets::orbit_system.before(crate::scene::planets::upload_planets),
             )
             .add_systems(Update, crate::scene::planets::upload_planets)
             .add_systems(Update, rebuild_bloom)
@@ -143,18 +141,14 @@ impl Plugin for BlackHolePlugin {
                 bevy_egui::EguiPrimaryContextPass,
                 (
                     crate::ui::setup_egui_style,
-                    crate::ui::loading::loading_ui_system
-                        .run_if(in_state(AppState::Loading)),
-                    crate::ui::ui_system
-                        .run_if(in_state(AppState::Running)),
+                    crate::ui::loading::loading_ui_system.run_if(in_state(AppState::Loading)),
+                    crate::ui::ui_system.run_if(in_state(AppState::Running)),
                 ),
             );
     }
 }
 
-fn update_loading_progress(
-    mut progress: ResMut<LoadingProgress>,
-) {
+fn update_loading_progress(mut progress: ResMut<LoadingProgress>) {
     progress.warmup_frames += 1;
     let frames = progress.warmup_frames;
     if frames < 5 {
@@ -215,7 +209,8 @@ fn spawn_fullscreen_quad(
     // quad's draw — the screen shows only the camera clear color. Pre-fill a
     // MAX_PLANETS-sized buffer of zeroed SphereData; upload_planets updates it.
     let planets_buffer = buffers.add(ShaderBuffer::from(vec![
-        super::material::SphereData::default();
+        super::material::SphereData::default(
+        );
         super::material::MAX_PLANETS
     ]));
     let material = BlackHoleMaterial {
@@ -278,7 +273,11 @@ fn spawn_fullscreen_quad(
         // 1x1 black fallback — composite samples black, effectively scene-only ACES.
         // 8 zero bytes = one Rgba16Float pixel (16 bits/channel × 4).
         images.add(Image::new_fill(
-            bevy::render::render_resource::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            bevy::render::render_resource::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             bevy::render::render_resource::TextureDimension::D2,
             &[0, 0, 0, 0, 0, 0, 0, 0],
             TextureFormat::Rgba16Float,
@@ -287,7 +286,10 @@ fn spawn_fullscreen_quad(
     });
     let composite_mat = composite_materials.add(crate::render::material::CompositeMaterial {
         uniform: crate::render::material::CompositeUniform {
-            bloom_strength: 0.8, exposure: 1.0, _pad0: 0.0, _pad1: 0.0,
+            bloom_strength: 0.8,
+            exposure: 1.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
         },
         scene: offscreen.clone(),
         bloom: bloom_handle,
@@ -303,7 +305,14 @@ fn spawn_fullscreen_quad(
     // The composite camera renders to the window (Rgba8UnormSrgb surface).
     // PrimaryEguiContext tells bevy_egui to render the UI onto THIS camera,
     // not the offscreen/bloom cameras (which render to Rgba16Float Images).
-    commands.spawn((Camera2d, Msaa::Off, UpscaleCamera, Nudgable, bevy_egui::PrimaryEguiContext, RenderLayers::layer(1)));
+    commands.spawn((
+        Camera2d,
+        Msaa::Off,
+        UpscaleCamera,
+        Nudgable,
+        bevy_egui::PrimaryEguiContext,
+        RenderLayers::layer(1),
+    ));
 }
 
 /// Spawns the bloom pipeline (brightpass + blur pyramid + bloom_final).
@@ -331,17 +340,25 @@ fn spawn_bloom_pipeline(
     let bw = ((w as f32 * 0.5) as u32).max(1);
     let bh = ((h as f32 * 0.5) as u32).max(1);
     let bloom0 = images.add(Image::new_target_texture(
-        bw, bh, TextureFormat::Rgba16Float, None,
+        bw,
+        bh,
+        TextureFormat::Rgba16Float,
+        None,
     ));
     commands.spawn(BloomTarget0(bloom0.clone()));
     commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(bp_materials.add(crate::render::material::BrightPassMaterial {
-            uniform: crate::render::material::BrightPassUniform {
-                threshold: 1.0, _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
-            },
-            source: offscreen.clone(),
-        })),
+        MeshMaterial2d(
+            bp_materials.add(crate::render::material::BrightPassMaterial {
+                uniform: crate::render::material::BrightPassUniform {
+                    threshold: 1.0,
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                    _pad2: 0.0,
+                },
+                source: offscreen.clone(),
+            }),
+        ),
         Transform::default().with_scale(Vec3::new(bw as f32 / 2.0, bh as f32 / 2.0, 1.0)),
         BrightPassQuad,
         QuadScaleFactor(0.5, 0.5),
@@ -367,10 +384,16 @@ fn spawn_bloom_pipeline(
     let b2w = ((w as f32 * 0.125) as u32).max(1);
     let b2h = ((h as f32 * 0.125) as u32).max(1);
     let bloom1 = images.add(Image::new_target_texture(
-        b1w, b1h, TextureFormat::Rgba16Float, None,
+        b1w,
+        b1h,
+        TextureFormat::Rgba16Float,
+        None,
     ));
     let bloom2 = images.add(Image::new_target_texture(
-        b2w, b2h, TextureFormat::Rgba16Float, None,
+        b2w,
+        b2h,
+        TextureFormat::Rgba16Float,
+        None,
     ));
     commands.spawn(BloomTarget1(bloom1.clone()));
     commands.spawn(BloomTarget2(bloom2.clone()));
@@ -381,7 +404,10 @@ fn spawn_bloom_pipeline(
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
             uniform: crate::render::material::BlurUniform {
-                mode: 0, texel_size: down01_texel, blend: 0.0, _pad0: 0.0,
+                mode: 0,
+                texel_size: down01_texel,
+                blend: 0.0,
+                _pad0: 0.0,
             },
             source: bloom0.clone(),
         })),
@@ -396,7 +422,10 @@ fn spawn_bloom_pipeline(
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
             uniform: crate::render::material::BlurUniform {
-                mode: 0, texel_size: down12_texel, blend: 0.0, _pad0: 0.0,
+                mode: 0,
+                texel_size: down12_texel,
+                blend: 0.0,
+                _pad0: 0.0,
             },
             source: bloom1.clone(),
         })),
@@ -411,7 +440,10 @@ fn spawn_bloom_pipeline(
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
             uniform: crate::render::material::BlurUniform {
-                mode: 1, texel_size: up21_texel, blend: 0.6, _pad0: 0.0,
+                mode: 1,
+                texel_size: up21_texel,
+                blend: 0.6,
+                _pad0: 0.0,
             },
             source: bloom2.clone(),
         })),
@@ -424,7 +456,10 @@ fn spawn_bloom_pipeline(
     let bfw = bw;
     let bfh = bh;
     let bloom_final = images.add(Image::new_target_texture(
-        bfw, bfh, TextureFormat::Rgba16Float, None,
+        bfw,
+        bfh,
+        TextureFormat::Rgba16Float,
+        None,
     ));
     commands.spawn(BloomFinalTarget(bloom_final.clone()));
     let up10_texel = Vec2::new(1.0 / b1w as f32, 1.0 / b1h as f32);
@@ -432,7 +467,10 @@ fn spawn_bloom_pipeline(
         Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
         MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
             uniform: crate::render::material::BlurUniform {
-                mode: 1, texel_size: up10_texel, blend: 0.8, _pad0: 0.0,
+                mode: 1,
+                texel_size: up10_texel,
+                blend: 0.8,
+                _pad0: 0.0,
             },
             source: bloom1.clone(),
         })),
@@ -443,20 +481,56 @@ fn spawn_bloom_pipeline(
     ));
     // Cameras: down01=-18, down12=-17, up21=-16, up10=-15.
     commands.spawn((
-        Camera2d, Camera { order: -18, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
-        RenderTarget::Image(bloom1.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(3),
+        Camera2d,
+        Camera {
+            order: -18,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
+            ..default()
+        },
+        RenderTarget::Image(bloom1.clone().into()),
+        Msaa::Off,
+        BlurCamera,
+        Nudgable,
+        RenderLayers::layer(3),
     ));
     commands.spawn((
-        Camera2d, Camera { order: -17, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
-        RenderTarget::Image(bloom2.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(4),
+        Camera2d,
+        Camera {
+            order: -17,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
+            ..default()
+        },
+        RenderTarget::Image(bloom2.clone().into()),
+        Msaa::Off,
+        BlurCamera,
+        Nudgable,
+        RenderLayers::layer(4),
     ));
     commands.spawn((
-        Camera2d, Camera { order: -16, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
-        RenderTarget::Image(bloom1.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(5),
+        Camera2d,
+        Camera {
+            order: -16,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
+            ..default()
+        },
+        RenderTarget::Image(bloom1.clone().into()),
+        Msaa::Off,
+        BlurCamera,
+        Nudgable,
+        RenderLayers::layer(5),
     ));
     commands.spawn((
-        Camera2d, Camera { order: -15, clear_color: ClearColorConfig::Custom(Color::srgb(0.0,0.0,0.0)), ..default() },
-        RenderTarget::Image(bloom_final.clone().into()), Msaa::Off, BlurCamera, Nudgable, RenderLayers::layer(6),
+        Camera2d,
+        Camera {
+            order: -15,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
+            ..default()
+        },
+        RenderTarget::Image(bloom_final.clone().into()),
+        Msaa::Off,
+        BlurCamera,
+        Nudgable,
+        RenderLayers::layer(6),
     ));
 
     Some(bloom_final.clone())
@@ -488,7 +562,9 @@ fn resize_offscreen(
     if resized.read().next().is_none() {
         return;
     }
-    let Ok(win) = window.single() else { return; };
+    let Ok(win) = window.single() else {
+        return;
+    };
     let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
     let w = ((win.width() * scale) as u32).max(1);
     let h = ((win.height() * scale) as u32).max(1);
@@ -507,16 +583,28 @@ fn resize_offscreen(
     let b2w = ((w as f32 * 0.125) as u32).max(1);
     let b2h = ((h as f32 * 0.125) as u32).max(1);
     if let Ok(t) = bloom0.single() {
-        let _ = images.insert(t.0.id(), Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None));
+        let _ = images.insert(
+            t.0.id(),
+            Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None),
+        );
     }
     if let Ok(t) = bloom1.single() {
-        let _ = images.insert(t.0.id(), Image::new_target_texture(b1w, b1h, TextureFormat::Rgba16Float, None));
+        let _ = images.insert(
+            t.0.id(),
+            Image::new_target_texture(b1w, b1h, TextureFormat::Rgba16Float, None),
+        );
     }
     if let Ok(t) = bloom2.single() {
-        let _ = images.insert(t.0.id(), Image::new_target_texture(b2w, b2h, TextureFormat::Rgba16Float, None));
+        let _ = images.insert(
+            t.0.id(),
+            Image::new_target_texture(b2w, b2h, TextureFormat::Rgba16Float, None),
+        );
     }
     if let Ok(t) = bloom_final.single() {
-        let _ = images.insert(t.0.id(), Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None));
+        let _ = images.insert(
+            t.0.id(),
+            Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None),
+        );
     }
     // Rescale offscreen + bloom quads against the offscreen resolution.
     for (mut t, f) in &mut quads.p0() {
@@ -537,10 +625,7 @@ fn resize_offscreen(
 /// texture every frame → frozen view) and the upscale camera (the one
 /// rendering to the window). Remove when the upstream regression is fixed.
 #[allow(clippy::type_complexity)]
-fn nudge_camera(
-    time: Res<Time>,
-    mut camera: Query<&mut Transform, With<Nudgable>>,
-) {
+fn nudge_camera(time: Res<Time>, mut camera: Query<&mut Transform, With<Nudgable>>) {
     let nudge = (time.elapsed_secs() * 5.0).sin() * 1e-3;
     for mut t in &mut camera {
         t.translation.x = nudge;
@@ -559,14 +644,24 @@ fn rebuild_bloom(
     params: Res<crate::params::BlackHoleParams>,
     applied: Res<AppliedBloomQuality>,
     mut commands: Commands,
-    bloom_entities: Query<Entity, Or<(
-        With<BrightPassCamera>, With<BlurCamera>,
-        With<BrightPassQuad>, With<BlurQuad>,
-    )>>,
-    bloom_targets: Query<Entity, Or<(
-        With<BloomTarget0>, With<BloomTarget1>,
-        With<BloomTarget2>, With<BloomFinalTarget>,
-    )>>,
+    bloom_entities: Query<
+        Entity,
+        Or<(
+            With<BrightPassCamera>,
+            With<BlurCamera>,
+            With<BrightPassQuad>,
+            With<BlurQuad>,
+        )>,
+    >,
+    bloom_targets: Query<
+        Entity,
+        Or<(
+            With<BloomTarget0>,
+            With<BloomTarget1>,
+            With<BloomTarget2>,
+            With<BloomFinalTarget>,
+        )>,
+    >,
     mut composite_materials: ResMut<Assets<crate::render::material::CompositeMaterial>>,
     offscreen_target: Query<&OffscreenTarget>,
     window: Query<&Window>,
@@ -587,11 +682,15 @@ fn rebuild_bloom(
         commands.entity(e).despawn();
     }
     // Re-spawn at the new quality (or not at all, if Off).
-    let Ok(win) = window.single() else { return; };
+    let Ok(win) = window.single() else {
+        return;
+    };
     let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
     let w = ((win.width() * scale) as u32).max(1);
     let h = ((win.height() * scale) as u32).max(1);
-    let Ok(offscreen_t) = offscreen_target.single() else { return; };
+    let Ok(offscreen_t) = offscreen_target.single() else {
+        return;
+    };
     let offscreen = offscreen_t.0.clone();
     let new_bloom = spawn_bloom_pipeline(
         &mut commands,
@@ -608,7 +707,11 @@ fn rebuild_bloom(
     // texture so the composite samples black (scene-only ACES).
     let bloom_handle = new_bloom.unwrap_or_else(|| {
         images.add(Image::new_fill(
-            bevy::render::render_resource::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            bevy::render::render_resource::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             bevy::render::render_resource::TextureDimension::D2,
             &[0, 0, 0, 0, 0, 0, 0, 0],
             TextureFormat::Rgba16Float,

@@ -37,7 +37,7 @@ pub struct BlackHoleUniforms {
     pub grid_enabled: u32,
     pub planet_count: u32,
     pub steps: u32,
-    pub spin: f32,       // Phase 2: dimensionless Kerr spin χ = a/M ∈ [0,1].
+    pub spin: f32, // Phase 2: dimensionless Kerr spin χ = a/M ∈ [0,1].
     pub star_aa: u32,
     pub bloom_threshold: f32,
     pub bloom_strength: f32,
@@ -54,8 +54,8 @@ pub struct BlackHoleUniforms {
     pub arm_strength: f32,
     pub disk_quality: u32,
     // Disk color mode + blackbody temp, relativistic jets.
-    pub disk_color_mode: u32,   // 0=gradient, 1=blackbody
-    pub disk_temp: f32,         // blackbody base temperature (Kelvin)
+    pub disk_color_mode: u32, // 0=gradient, 1=blackbody
+    pub disk_temp: f32,       // blackbody base temperature (Kelvin)
     pub jets_enabled: u32,
     pub jets_strength: f32,
     // Anti-aliasing (Phase 3.3): per-pixel supersample count for the lensed-image rings.
@@ -106,7 +106,7 @@ impl Default for BlackHoleUniforms {
             arm_count: 2.0,
             arm_tightness: 2.0,
             arm_strength: 0.5,
-            disk_quality: 3, // High
+            disk_quality: 3,    // High
             disk_color_mode: 1, // Blackbody (Novikov-Thorne + Kerr Doppler)
             disk_temp: 6500.0,
             jets_enabled: 1,
@@ -190,9 +190,9 @@ impl Material2d for BrightPassMaterial {
 /// Uniform for one blur pass (bloom stages [3]/[4]).
 #[derive(Clone, ShaderType)]
 pub struct BlurUniform {
-    pub mode: u32,           // 0 = downsample, 1 = upsample
+    pub mode: u32, // 0 = downsample, 1 = upsample
     pub texel_size: Vec2,
-    pub blend: f32,          // upsample blend factor (ignored for down)
+    pub blend: f32, // upsample blend factor (ignored for down)
     pub _pad0: f32,
 }
 

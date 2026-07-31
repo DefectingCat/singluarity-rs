@@ -23,7 +23,7 @@ impl Default for OrbitCamera {
             // default angle, not a pole-avoidance choice.
             pitch: -0.335,
             distance: 30.0,
-            fov: 1.0,         // radians
+            fov: 1.0, // radians
         }
     }
 }
@@ -90,8 +90,8 @@ pub fn orbit_controller(
             // Full pitch range: the basis() has no gimbal pole now (right is yaw-only),
             // so crossing ±π/2 no longer flips. The ±0.05 margin keeps eye off the
             // exact origin-axis singularity where forward = ∓Y and yaw is undefined.
-            camera.pitch =
-                (camera.pitch - ev.delta.y * 0.005).clamp(-std::f32::consts::PI + 0.05, std::f32::consts::PI - 0.05);
+            camera.pitch = (camera.pitch - ev.delta.y * 0.005)
+                .clamp(-std::f32::consts::PI + 0.05, std::f32::consts::PI - 0.05);
         }
     }
     for ev in wheel.read() {

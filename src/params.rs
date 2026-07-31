@@ -3,11 +3,11 @@ use bevy::prelude::*;
 /// Bloom pyramid depth (number of bloom textures).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BloomQuality {
-    Off,     // no bloom, scene-only ACES composite
-    Low,     // 1 level: brightpass → composite (soft halo)
-    Medium,  // 2 levels: brightpass → 1 down → 1 up → composite
+    Off,    // no bloom, scene-only ACES composite
+    Low,    // 1 level: brightpass → composite (soft halo)
+    Medium, // 2 levels: brightpass → 1 down → 1 up → composite
     #[default]
-    High,    // 3 levels: brightpass → 2 down → 2 up → composite (full cinematic)
+    High, // 3 levels: brightpass → 2 down → 2 up → composite (full cinematic)
 }
 
 impl BloomQuality {
@@ -25,11 +25,11 @@ impl BloomQuality {
 #[allow(dead_code)] // consumed starting Task 7 (tier dispatch) + Task 8 (egui)
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskQuality {
-    Off,     // flat zero-thickness fallback (current appearance)
-    Low,     // 3/2/2 octaves — web default
-    Medium,  // 4/3/3 octaves
+    Off,    // flat zero-thickness fallback (current appearance)
+    Low,    // 3/2/2 octaves — web default
+    Medium, // 4/3/3 octaves
     #[default]
-    High,    // 5/4/3 octaves — desktop default
+    High, // 5/4/3 octaves — desktop default
 }
 
 impl DiskQuality {
@@ -63,7 +63,7 @@ impl DiskQuality {
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskColorMode {
     #[default]
-    Gradient,  // mode 0: existing appearance
+    Gradient, // mode 0: existing appearance
     Blackbody, // mode 1: analytic blackbody + Kerr δ
 }
 
@@ -110,7 +110,7 @@ pub struct BlackHoleParams {
     // Accretion disk
     pub disk_inner: f32,
     pub disk_outer: f32,
-    pub disk_tilt: f32,        // radians, tilt of disk plane vs. camera
+    pub disk_tilt: f32, // radians, tilt of disk plane vs. camera
     pub disk_brightness: f32,
     pub disk_rotation_speed: f32,
     pub doppler_enabled: bool,
@@ -165,13 +165,21 @@ impl Default for BlackHoleParams {
             rs: 1.0,
             disk_inner: 3.0,
             disk_outer: 25.0, // Gargantua-like extent (was 15.0)
-            disk_tilt: 0.45,       // ~25.8 deg
+            disk_tilt: 0.45,  // ~25.8 deg
             disk_brightness: 1.0,
             disk_rotation_speed: 1.2,
             doppler_enabled: true,
             doppler_strength: 1.0,
-            steps: if cfg!(target_arch = "wasm32") { 200 } else { 300 },
-            render_scale: if cfg!(target_arch = "wasm32") { 0.5 } else { 0.75 },
+            steps: if cfg!(target_arch = "wasm32") {
+                200
+            } else {
+                300
+            },
+            render_scale: if cfg!(target_arch = "wasm32") {
+                0.5
+            } else {
+                0.75
+            },
             star_intensity: 1.0,
             grid_enabled: false,
             grid_density: 1.0,
@@ -182,7 +190,11 @@ impl Default for BlackHoleParams {
             bloom_threshold: 1.0,
             bloom_strength: 0.8,
             exposure: 1.0,
-            bloom_quality: if cfg!(target_arch = "wasm32") { BloomQuality::Low } else { BloomQuality::High },
+            bloom_quality: if cfg!(target_arch = "wasm32") {
+                BloomQuality::Low
+            } else {
+                BloomQuality::High
+            },
             // H/R ratio (was an absolute world-space half-height). 0.15 = standard
             // thin-disk scale height; the slab now scales with radius, so a ray
             // through large r traverses a proportionally thicker disk.
@@ -197,7 +209,11 @@ impl Default for BlackHoleParams {
             arm_count: 2.0,
             arm_tightness: 2.0,
             arm_strength: 0.5,
-            disk_quality: if cfg!(target_arch = "wasm32") { DiskQuality::Low } else { DiskQuality::High },
+            disk_quality: if cfg!(target_arch = "wasm32") {
+                DiskQuality::Low
+            } else {
+                DiskQuality::High
+            },
             // Blackbody: the Novikov-Thorne radial temperature gradient × Kerr
             // Doppler gives the smooth white-hot inner → deep-orange outer look
             // (closer to Gargantua than the hand-tuned Gradient mode).
@@ -211,7 +227,11 @@ impl Default for BlackHoleParams {
             // The RK45 march is already ~10× Phase 1's cost, so desktop stays
             // at 2× by default — enough to soften the rings — with High (4×)
             // available in the UI for a fully smooth Gargantua look.
-            aa_quality: if cfg!(target_arch = "wasm32") { AaQuality::Off } else { AaQuality::Low },
+            aa_quality: if cfg!(target_arch = "wasm32") {
+                AaQuality::Off
+            } else {
+                AaQuality::Low
+            },
             // Planets: 6 颗. 半径基准是 disk_outer (默认 25), factor 1.3 →
             // r ≈ 32.5, 稳定在盘外 (盘范围 [isco, 25]). 早期用 ISCO 作基准会让
             // 行星落进盘的径向范围. 种子 42, time_scale 50× (进动慢, 需放大).

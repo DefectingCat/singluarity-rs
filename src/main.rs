@@ -68,7 +68,9 @@ fn main() {
     #[cfg(not(debug_assertions))]
     let default_plugins = (
         EmbeddedAssetPlugin {
-            mode: PluginMode::ReplaceAndFallback { path: "assets".to_owned() },
+            mode: PluginMode::ReplaceAndFallback {
+                path: "assets".to_owned(),
+            },
         },
         default_plugins,
     );

@@ -5,7 +5,7 @@ use bevy::render::storage::ShaderBuffer;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use crate::render::material::{SphereData, MAX_PLANETS};
+use crate::render::material::{MAX_PLANETS, SphereData};
 
 /// A planet rendered as a lensed sphere inside the geodesic shader.
 #[derive(Component, Clone, Copy)]
@@ -40,8 +40,8 @@ pub struct PlanetSystemDirty(pub bool);
 /// - r = radius_factor · disk_outer  (绑定盘外缘, 保证行星在盘外)
 /// - Ω_φ = kerr_orbital_frequency(r, χ)  (轨道角速度)
 /// - Ω_LT = kerr_nodal_precession(r, χ)  (轨道面绕 Y 轴的进动率)
-/// 轨道面基 (u, v) 由 inclination + longitude_of_node 构造, 然后绕 Y 轴
-/// 整体旋转 Ω_LT·t (Lense-Thirring 进动).
+///   轨道面基 (u, v) 由 inclination + longitude_of_node 构造, 然后绕 Y 轴
+///   整体旋转 Ω_LT·t (Lense-Thirring 进动).
 ///
 /// 注: 半径基准是 disk_outer 而非 kerr_isco(χ). 早期版本用 ISCO 作基准,
 /// 但盘从 ISCO 向外延伸到 disk_outer (默认 25), 用 ISCO 会让行星落在
@@ -55,11 +55,7 @@ pub fn orbit_position(orbit: &OrbitParams, t: f32, chi: f32, disk_outer: f32) ->
     let inc = orbit.inclination;
     let lon = orbit.longitude_of_node;
     let sin_inc = inc.sin();
-    let n = Vec3::new(
-        sin_inc * lon.cos(),
-        inc.cos(),
-        sin_inc * lon.sin(),
-    );
+    let n = Vec3::new(sin_inc * lon.cos(), inc.cos(), sin_inc * lon.sin());
     // 2. 轨道面内正交基: u 沿升节点方向, v = n × u
     //    u 在 XZ 平面 (垂直于 Y 轴), 指向升节点
     let u = Vec3::new(-lon.sin(), 0.0, lon.cos());
@@ -240,7 +236,9 @@ mod tests {
             assert!(
                 (dist - expected_r).abs() < 1e-4,
                 "t={}: dist {} != r {}",
-                t, dist, expected_r
+                t,
+                dist,
+                expected_r
             );
         }
     }
@@ -256,7 +254,11 @@ mod tests {
         };
         for t in [0.0_f32, 1.0, 10.0] {
             let pos = orbit_position(&orbit, t, 0.0, 25.0);
-            assert!(pos.y.abs() < 1e-5, "χ=0 equatorial orbit should stay in y=0 plane at t={}", t);
+            assert!(
+                pos.y.abs() < 1e-5,
+                "χ=0 equatorial orbit should stay in y=0 plane at t={}",
+                t
+            );
         }
     }
 

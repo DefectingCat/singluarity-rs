@@ -8,11 +8,11 @@
 use bevy_egui::egui::{self, Color32, Stroke, TextStyle, Visuals};
 
 // --- Palette (single source of truth; referenced by every section helper) ---
-pub const ACCENT_CYAN: Color32 = Color32::from_rgb(90, 200, 255);   // #5AC8FF
+pub const ACCENT_CYAN: Color32 = Color32::from_rgb(90, 200, 255); // #5AC8FF
 pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(255, 140, 66); // #FF8C42
-pub const PANEL_FILL: Color32 = Color32::from_rgb(14, 16, 20);      // #0E1014
-pub const EXTREME_BG: Color32 = Color32::from_rgb(8, 9, 12);        // #08090C
-pub const MUTED_TEXT: Color32 = Color32::from_rgb(140, 140, 140);   // read-only / disabled labels
+pub const PANEL_FILL: Color32 = Color32::from_rgb(14, 16, 20); // #0E1014
+pub const EXTREME_BG: Color32 = Color32::from_rgb(8, 9, 12); // #08090C
+pub const MUTED_TEXT: Color32 = Color32::from_rgb(140, 140, 140); // read-only / disabled labels
 
 /// Text sizes applied over egui's default `Proportional` family. No custom
 /// font binary is embedded (spec non-goal).
@@ -76,7 +76,9 @@ pub fn setup(ctx: &egui::Context) {
         style.spacing.indent_ends_with_horizontal_line = false;
         style.animation_time = 0.12;
         for (ts, size) in text_styles() {
-            style.text_styles.insert(ts, egui::FontId::proportional(size));
+            style
+                .text_styles
+                .insert(ts, egui::FontId::proportional(size));
         }
         style.visuals = sci_fi_visuals();
     });

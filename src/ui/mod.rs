@@ -1,7 +1,7 @@
+pub mod loading;
+pub mod preset;
 mod sections;
 mod style;
-pub mod preset;
-pub mod loading;
 
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -14,15 +14,12 @@ use crate::ui::style::ACCENT_CYAN;
 /// `Local<bool>` guard so it retries until `ctx_mut()` first succeeds, then
 /// runs exactly once. Per-frame set_style/set_visuals would dirty layout
 /// caches every frame; this avoids that.
-pub fn setup_egui_style(
-    mut contexts: bevy_egui::EguiContexts,
-    mut done: Local<bool>,
-) {
+pub fn setup_egui_style(mut contexts: bevy_egui::EguiContexts, mut done: Local<bool>) {
     if *done {
         return;
     }
     if let Ok(ctx) = contexts.ctx_mut() {
-        crate::ui::style::setup(&ctx);
+        crate::ui::style::setup(ctx);
         *done = true;
     }
 }
@@ -33,10 +30,7 @@ fn group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
         .inner_margin(8.0)
         .corner_radius(6.0)
-        .stroke(egui::Stroke::new(
-            1.0,
-            ui.visuals().window_stroke.color,
-        ))
+        .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke.color))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(
@@ -85,8 +79,11 @@ fn collapsing_with_toggle(
     body: impl FnOnce(&mut egui::Ui, bool),
 ) {
     let id = ui.make_persistent_id(id);
-    let state =
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        default_open,
+    );
     state
         .show_header(ui, |ui| {
             ui.checkbox(enabled, title);
@@ -125,7 +122,11 @@ fn preset_bar(
             *just_applied = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("▶").on_hover_text("Collapse panel (Tab / H)").clicked() {
+            if ui
+                .button("▶")
+                .on_hover_text("Collapse panel (Tab / H)")
+                .clicked()
+            {
                 *collapsed = true;
             }
             // Global reset-to-default for all params.
@@ -139,6 +140,7 @@ fn preset_bar(
     ui.separator();
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
     mut params: ResMut<crate::params::BlackHoleParams>,
@@ -196,7 +198,8 @@ pub fn ui_system(
             .resizable(false)
             .show(&mut root_ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("◀ Controls")
+                    if ui
+                        .button("◀ Controls")
                         .on_hover_text("Expand panel (Tab / H)")
                         .clicked()
                     {
@@ -219,69 +222,71 @@ pub fn ui_system(
                     &mut panel_collapsed,
                 );
 
-            // Section stack (scrolls).
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                use crate::ui::sections::*;
+                // Section stack (scrolls).
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    use crate::ui::sections::*;
 
-                // --- Always-open cards ---
-                group(ui, "Camera", |ui| section_camera(ui, &mut camera));
-                group(ui, "Black Hole", |ui| section_black_hole(ui, &mut params));
-                group(ui, "Accretion Disk", |ui| section_disk(ui, &mut params));
-                group(ui, "Quality", |ui| section_quality(ui, &mut params));
+                    // --- Always-open cards ---
+                    group(ui, "Camera", |ui| section_camera(ui, &mut camera));
+                    group(ui, "Black Hole", |ui| section_black_hole(ui, &mut params));
+                    group(ui, "Accretion Disk", |ui| section_disk(ui, &mut params));
+                    group(ui, "Quality", |ui| section_quality(ui, &mut params));
 
-                // --- Collapsing sections ---
-                collapsing(ui, "turbulence", "Disk Turbulence", false,
-                    |ui| section_turbulence(ui, &mut params));
+                    // --- Collapsing sections ---
+                    collapsing(ui, "turbulence", "Disk Turbulence", false, |ui| {
+                        section_turbulence(ui, &mut params)
+                    });
 
-                // collapsing_with_toggle takes `&mut bool` for the header
-                // checkbox AND a body closure that mutates `params`. Passing
-                // `&mut params.<field>` plus a closure borrowing `&mut params`
-                // is a double-mutable-borrow; copy the field out, pass a local
-                // ref, then write it back. (All four are `bool` → Copy.)
-                let mut en = params.doppler_enabled;
-                collapsing_with_toggle(ui, "doppler", "Doppler", false,
-                    &mut en,
-                    |ui, en| section_doppler(ui, &mut params, en));
-                params.doppler_enabled = en;
+                    // collapsing_with_toggle takes `&mut bool` for the header
+                    // checkbox AND a body closure that mutates `params`. Passing
+                    // `&mut params.<field>` plus a closure borrowing `&mut params`
+                    // is a double-mutable-borrow; copy the field out, pass a local
+                    // ref, then write it back. (All four are `bool` → Copy.)
+                    let mut en = params.doppler_enabled;
+                    collapsing_with_toggle(ui, "doppler", "Doppler", false, &mut en, |ui, en| {
+                        section_doppler(ui, &mut params, en)
+                    });
+                    params.doppler_enabled = en;
 
-                let mut en = params.jets_enabled;
-                collapsing_with_toggle(ui, "jets", "Jets", false,
-                    &mut en,
-                    |ui, en| section_jets(ui, &mut params, en));
-                params.jets_enabled = en;
+                    let mut en = params.jets_enabled;
+                    collapsing_with_toggle(ui, "jets", "Jets", false, &mut en, |ui, en| {
+                        section_jets(ui, &mut params, en)
+                    });
+                    params.jets_enabled = en;
 
-                // Planets: snapshot dirty-relevant fields before rendering so
-                // we can detect changes (relocated from the old Planets block).
-                let prev_planet = (
-                    params.planets_enabled,
-                    params.planet_count_target,
-                    params.planet_radius_factor,
-                    params.planet_seed,
-                );
-                let mut en = params.planets_enabled;
-                collapsing_with_toggle(ui, "planets", "Planets", false,
-                    &mut en,
-                    |ui, en| section_planets(ui, &mut params, en));
-                params.planets_enabled = en;
-                let curr_planet = (
-                    params.planets_enabled,
-                    params.planet_count_target,
-                    params.planet_radius_factor,
-                    params.planet_seed,
-                );
-                if curr_planet != prev_planet {
-                    planet_dirty.0 = true;
-                }
+                    // Planets: snapshot dirty-relevant fields before rendering so
+                    // we can detect changes (relocated from the old Planets block).
+                    let prev_planet = (
+                        params.planets_enabled,
+                        params.planet_count_target,
+                        params.planet_radius_factor,
+                        params.planet_seed,
+                    );
+                    let mut en = params.planets_enabled;
+                    collapsing_with_toggle(ui, "planets", "Planets", false, &mut en, |ui, en| {
+                        section_planets(ui, &mut params, en)
+                    });
+                    params.planets_enabled = en;
+                    let curr_planet = (
+                        params.planets_enabled,
+                        params.planet_count_target,
+                        params.planet_radius_factor,
+                        params.planet_seed,
+                    );
+                    if curr_planet != prev_planet {
+                        planet_dirty.0 = true;
+                    }
 
-                collapsing(ui, "background", "Background", false,
-                    |ui| section_background(ui, &mut params));
+                    collapsing(ui, "background", "Background", false, |ui| {
+                        section_background(ui, &mut params)
+                    });
 
-                let mut en = params.grid_enabled;
-                collapsing_with_toggle(ui, "grid", "Grid", false,
-                    &mut en,
-                    |ui, en| section_grid(ui, &mut params, en));
-                params.grid_enabled = en;
-            });
+                    let mut en = params.grid_enabled;
+                    collapsing_with_toggle(ui, "grid", "Grid", false, &mut en, |ui, en| {
+                        section_grid(ui, &mut params, en)
+                    });
+                    params.grid_enabled = en;
+                });
             })
     };
 

@@ -1,7 +1,7 @@
-use bevy::prelude::*;
-use bevy_egui::egui::{self, Color32, LayerId, Margin, Stroke, UiBuilder, Vec2};
 use crate::state::LoadingProgress;
 use crate::ui::style::{ACCENT_CYAN, ACCENT_ORANGE, EXTREME_BG, MUTED_TEXT, PANEL_FILL};
+use bevy::prelude::*;
+use bevy_egui::egui::{self, Color32, LayerId, Margin, Stroke, UiBuilder, Vec2};
 
 /// Renders the HUD loading progress card during `AppState::Loading`.
 pub fn loading_ui_system(
@@ -74,15 +74,18 @@ pub fn loading_ui_system(
                                         .color(MUTED_TEXT)
                                         .monospace(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{}%", display_pct))
-                                            .strong()
-                                            .size(13.0)
-                                            .color(ACCENT_ORANGE)
-                                            .monospace(),
-                                    );
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("{}%", display_pct))
+                                                .strong()
+                                                .size(13.0)
+                                                .color(ACCENT_ORANGE)
+                                                .monospace(),
+                                        );
+                                    },
+                                );
                             });
 
                             ui.add_space(6.0);
@@ -95,25 +98,18 @@ pub fn loading_ui_system(
                             );
 
                             // Background track
-                            ui.painter().rect_filled(
-                                rect,
-                                3.0,
-                                EXTREME_BG,
-                            );
+                            ui.painter().rect_filled(rect, 3.0, EXTREME_BG);
 
                             // Filled portion
-                            let fill_width = rect.width() * progress.display_progress.clamp(0.01, 1.0);
+                            let fill_width =
+                                rect.width() * progress.display_progress.clamp(0.01, 1.0);
                             let fill_rect = egui::Rect::from_min_size(
                                 rect.min,
                                 Vec2::new(fill_width, progress_bar_height),
                             );
 
                             // Gradient / Accent fill
-                            ui.painter().rect_filled(
-                                fill_rect,
-                                3.0,
-                                ACCENT_CYAN,
-                            );
+                            ui.painter().rect_filled(fill_rect, 3.0, ACCENT_CYAN);
 
                             ui.add_space(14.0);
 

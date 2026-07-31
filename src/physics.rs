@@ -195,16 +195,10 @@ pub fn rk45_step(pos: Vec3, dir: Vec3, dt: f32, chi: f32) -> RkStep {
 
     // 5th-order solution (advances the state).
     let new_pos = pos
-        + (k1p * 37.0 / 378.0
-            + k3p * 250.0 / 621.0
-            + k4p * 125.0 / 594.0
-            + k5p * 512.0 / 1771.0)
+        + (k1p * 37.0 / 378.0 + k3p * 250.0 / 621.0 + k4p * 125.0 / 594.0 + k5p * 512.0 / 1771.0)
             * dt;
     let new_dir = (dir
-        + (k1d * 37.0 / 378.0
-            + k3d * 250.0 / 621.0
-            + k4d * 125.0 / 594.0
-            + k5d * 512.0 / 1771.0)
+        + (k1d * 37.0 / 378.0 + k3d * 250.0 / 621.0 + k4d * 125.0 / 594.0 + k5d * 512.0 / 1771.0)
             * dt)
         .normalize();
     // 4th-order solution (for the error estimate only).
@@ -286,7 +280,11 @@ mod tests {
 
     #[test]
     fn bcrit_value() {
-        assert!((BCRIT - 2.598).abs() < 0.01, "bcrit should be ~2.598, got {}", BCRIT);
+        assert!(
+            (BCRIT - 2.598).abs() < 0.01,
+            "bcrit should be ~2.598, got {}",
+            BCRIT
+        );
     }
 
     #[test]
@@ -296,7 +294,10 @@ mod tests {
         let dir = Vec3::new(0.0, 2.0, -50.0).normalize(); // b ~ 2.0 < 2.598
         let b = impact_parameter(eye, dir);
         assert!(b < BCRIT, "b {} should be < bcrit {}", b, BCRIT);
-        assert!(is_captured(eye, dir, 2000, 0.1), "ray below bcrit should be captured");
+        assert!(
+            is_captured(eye, dir, 2000, 0.1),
+            "ray below bcrit should be captured"
+        );
     }
 
     #[test]
@@ -305,7 +306,10 @@ mod tests {
         let dir = Vec3::new(0.0, 10.0, -50.0).normalize(); // b ~ 9.8 >> bcrit
         let b = impact_parameter(eye, dir);
         assert!(b > BCRIT);
-        assert!(!is_captured(eye, dir, 2000, 0.1), "ray above bcrit should escape");
+        assert!(
+            !is_captured(eye, dir, 2000, 0.1),
+            "ray above bcrit should escape"
+        );
     }
 
     #[test]
@@ -317,7 +321,9 @@ mod tests {
             assert!(
                 (kerr - newton).abs() < 1e-6,
                 "χ=0 at r={}: expected {} (newton), got {}",
-                r, newton, kerr
+                r,
+                newton,
+                kerr
             );
         }
     }
@@ -339,7 +345,8 @@ mod tests {
             assert!(
                 prec.abs() < 1e-6,
                 "χ=0 at r={} should have zero precession, got {}",
-                r, prec
+                r,
+                prec
             );
         }
     }
@@ -365,7 +372,9 @@ mod tests {
         assert!(
             strong > weak,
             "strong-field precession at r={} should exceed weak approx {} , got {}",
-            r, weak, strong
+            r,
+            weak,
+            strong
         );
     }
 }

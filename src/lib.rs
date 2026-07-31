@@ -7,6 +7,6 @@ pub mod params;
 pub mod physics;
 pub mod render;
 pub mod scene;
-pub mod ui;
 pub mod state;
+pub mod ui;
 pub mod web;
