@@ -6,3 +6,12 @@ dist = "dist"
 address = "127.0.0.1"
 port = 8080
 open = false
+
+[tools]
+# binaryen version_131 (2026-07) defaults to accepting all standardized wasm
+# proposals that rustc 1.82+ emits (bulk-memory, nontrapping-float-to-int,
+# sign-ext, reference-types, multivalue, mutable-globals). trunk 0.21.14's
+# default version_123 rejects them as unenabled proposals, failing wasm-opt -Oz.
+# Verified: full-project wasm (8 features) passes wasm-opt -Oz with zero flags
+# on version_131, exit 0.
+wasm_opt = "version_131"
