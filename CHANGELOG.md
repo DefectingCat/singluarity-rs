@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-03
+
+### Performance
+- Pruned unused default Bevy engine features (`bevy_gilrs`, `bevy_gltf`, `bevy_scene`, `bevy_pbr`, `bevy_audio`, etc.) in `Cargo.toml`, significantly shrinking the WebAssembly binary size.
+
+### Fixed
+- Fixed desktop release workflow packaging paths by ensuring `--target` triple is specified for `cargo build` and `cargo packager` (`release.yml`).
+- Fixed WebAssembly build pipeline and `wasm-opt` configuration for compatibility with Binaryen 131 and bulk-memory features.
+- Added missing `DomTokenList` feature flag to `web-sys` dependency for WebGPU canvas handling.
+
+### CI/CD
+- Added automated container deployment for WebGPU builds to production server on tag push.
+- Updated CI workflows to use `taiki-e/install-action` for `cargo-packager` installation.
 ## [0.2.0] - 2026-07-31
 
 ### Added
