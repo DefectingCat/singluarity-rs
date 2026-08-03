@@ -67,7 +67,9 @@ jobs:
             squashfs-tools
 
       - name: Setup cargo-packager
-        uses: crabnebula-dev/cargo-packager-action@v1
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager
 
       - name: Package Desktop Application
         run: cargo packager --release --target ${{ matrix.target }}
