@@ -71,6 +71,9 @@ jobs:
         with:
           tool: cargo-packager
 
+      - name: Build Desktop Application
+        run: cargo build --release --target ${{ matrix.target }}
+
       - name: Package Desktop Application
         run: cargo packager --release --target ${{ matrix.target }}
 
