@@ -92,7 +92,7 @@ jobs:
             target/packager/*.msi
           fail_on_unmatched_files: false
   upload-web-assets:
-    name: Build & Upload Web Asset
+    name: Build, Release & Deploy Web
     needs: create-release
     runs-on: ubuntu-latest
     permissions:
@@ -124,3 +124,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: singularity-rs-web.zip
+
+      - name: Build container image
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          docker build \
+            -t localhost/singularity-web:"$TAG" \
+            -t localhost/singularity-web:latest .
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.XUN_SSH_KEY }}
+
+      - name: Add xun known_hosts
+        run: mkdir -p ~/.ssh && echo "${{ secrets.XUN_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to xun
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Pipe image straight into xun's podman: load → recreate container → prune dangling layers.
+          docker save localhost/singularity-web:"$TAG" localhost/singularity-web:latest \
+            | ssh -o StrictHostKeyChecking=yes root@xunrua.top \
+            "podman load \
+             && cd /root/docker/singularity \
+             && docker compose up -d --force-recreate web \
+             && podman image prune -f"

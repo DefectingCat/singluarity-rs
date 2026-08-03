@@ -1,0 +1,8 @@
+# Keep build context small — trunk only needs source + assets + Cargo + web/.
+target/
+dist/
+.git/
+others/
+.agents/
+docs/
+*.md
