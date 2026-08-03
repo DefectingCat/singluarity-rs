@@ -54,12 +54,7 @@ fn main() {
         .set(AssetPlugin {
             meta_check: bevy::asset::AssetMetaCheck::Never,
             ..default()
-        })
-        // The app has no audio. The default AudioPlugin opens a WebAudio
-        // sink at startup, which browsers block until a user gesture and
-        // log as a noisy "AudioContext was not allowed to start" error.
-        // Dropping it removes that noise and shrinks the wasm binary.
-        .disable::<bevy::audio::AudioPlugin>();
+        });
 
     // In release, prepend the embedder so it replaces the default file source
     // with the embedded one (falling back to disk for anything not embedded).

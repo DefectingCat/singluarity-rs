@@ -24,7 +24,24 @@ name = "singularity_rs"
 path = "src/lib.rs"
 
 [dependencies]
-bevy = "0.19"
+bevy = { version = "0.19", default-features = false, features = [
+  "bevy_core_pipeline",
+  "bevy_render",
+  "bevy_sprite",
+  "bevy_sprite_render",
+  "bevy_ui",
+  "bevy_ui_render",
+  "bevy_window",
+  "bevy_winit",
+  "bevy_asset",
+  "bevy_text",
+  "bevy_state",
+  "bevy_color",
+  "default_font",
+  "png",
+  "hdr",
+  "webgpu",
+] }
 bevy_egui = "0.41"
 bevy_asset_loader = "0.27"
 # Embeds the `assets/` tree (the WGSL shaders) into the binary so release
