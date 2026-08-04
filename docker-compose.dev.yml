@@ -6,7 +6,6 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - .:/app
       - cargo-registry:/usr/local/cargo/registry
       - cargo-target:/app/target
     develop:
