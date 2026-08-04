@@ -1,0 +1,26 @@
+FROM rust:latest
+
+# Configure domestic mirrors for rustup and cargo (rsproxy)
+ENV RUSTUP_DIST_SERVER="https://rsproxy.cn"
+ENV RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
+
+RUN mkdir -p /usr/local/cargo && \
+    echo '[source.crates-io]' > /usr/local/cargo/config.toml && \
+    echo 'replace-with = "rsproxy-sparse"' >> /usr/local/cargo/config.toml && \
+    echo '[source.rsproxy-sparse]' >> /usr/local/cargo/config.toml && \
+    echo 'registry = "sparse+https://rsproxy.cn/index/"' >> /usr/local/cargo/config.toml && \
+    echo '[net]' >> /usr/local/cargo/config.toml && \
+    echo 'git-fetch-with-cli = true' >> /usr/local/cargo/config.toml
+
+# Install WASM target, cargo tools, and rust components for IDE / container dev
+RUN rustup target add wasm32-unknown-unknown \
+ && rustup component add rust-src clippy rustfmt \
+ && cargo install --locked trunk
+
+WORKDIR /app
+
+# Expose Trunk dev server port
+EXPOSE 8080
+
+# Default command: run trunk serve listening on 0.0.0.0
+CMD ["trunk", "serve", "--address", "0.0.0.0", "--port", "8080"]

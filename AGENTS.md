@@ -6,6 +6,7 @@ A real-time Kerr (spinning) black-hole renderer in Bevy 0.19. One binary, two ta
 
 - **Desktop:** `cargo run --release` (debug is too slow to ray-trace; always use `--release` for visual checks).
 - **Web** (WebGPU only): `trunk serve` → http://127.0.0.1:8080. First-time setup: `cargo install --locked trunk` and `rustup target add wasm32-unknown-unknown`. Release web build: `trunk build --release`.
+- **Docker Dev Mode** (Web/WebGPU containerized dev): `docker compose -f docker-compose.dev.yml watch` (hot-reloads `src`, `assets`, `web`, `Trunk.toml` via Compose Watch) or VS Code / Cursor **Dev Containers: Reopen in Container** (`.devcontainer/devcontainer.json`).
 - `.cargo/config.toml` sets `--cfg web_sys_unstable_apis` for the `wasm32` target only — required for `web-sys`'s WebGPU bindings. It is a no-op on desktop; do not remove it.
 - `edition = "2024"`. No pinned toolchain file; tested on stable 1.96.
 - Release profiles (`Cargo.toml`): desktop `[profile.release]` uses `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = "symbols"`. Web `[profile.wasm-release]` inherits release and overrides `opt-level = "z"` for binary size. `trunk build --release` picks up `wasm-release`.
