@@ -12,10 +12,14 @@ RUN mkdir -p /usr/local/cargo && \
     echo '[net]' >> /usr/local/cargo/config.toml && \
     echo 'git-fetch-with-cli = true' >> /usr/local/cargo/config.toml
 
-# Install WASM target, cargo tools, and rust components for IDE / container dev
+# Install system dependencies (binaryen for wasm-opt)
+RUN apt-get update && apt-get install -y binaryen && rm -rf /var/lib/apt/lists/*
+
+# Install WASM target, cargo tools, wasm-bindgen-cli, and rust components for IDE / container dev
 RUN rustup target add wasm32-unknown-unknown \
  && rustup component add rust-src clippy rustfmt \
- && cargo install --locked trunk
+ && cargo install --locked trunk \
+ && cargo install --locked wasm-bindgen-cli --version 0.2.126
 
 WORKDIR /app
 
