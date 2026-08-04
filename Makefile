@@ -1,7 +1,11 @@
-.PHONY: docker-dev docker-build docker-test docker-down run web test help
+.PHONY: docker docker-dev docker-build docker-test docker-down run web test help
 
 # Default target
 .DEFAULT_GOAL := help
+
+## docker: Build the web production Docker container image
+docker:
+	docker build -t singularity-web:latest .
 
 ## docker-dev: Start Docker Dev Mode with Compose Watch (hot-reloading)
 docker-dev:
@@ -36,6 +40,7 @@ help:
 	@echo "singularity-rs Makefile"
 	@echo ""
 	@echo "Usage:"
+	@echo "  make docker        - Build web production Docker image"
 	@echo "  make docker-dev    - Start Docker Dev Mode with hot-reloading (Compose Watch)"
 	@echo "  make docker-build  - Build Docker Dev container image"
 	@echo "  make docker-test   - Run cargo test inside Docker container"
