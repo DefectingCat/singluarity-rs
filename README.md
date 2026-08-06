@@ -2,27 +2,31 @@
 
 A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.19. Each pixel geodesic-ray-traces curved spacetime, producing gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
 
-The visual target is Gargantua from *Interstellar*: a black shadow surrounded by a tilted, glowing accretion disk whose back side is lensed up and over the hole (and down underneath), with one side brighter from relativistic Doppler beaming.
+The visual target is Gargantua from _Interstellar_: a black shadow surrounded by a tilted, glowing accretion disk whose back side is lensed up and over the hole (and down underneath), with one side brighter from relativistic Doppler beaming.
 
 The integrator is a spinning (Kerr) geodesic: a dimensionless spin parameter χ ∈ [0,1] drives frame-dragging (Lense-Thirring) asymmetry and pulls the disk's inner edge inward along the Kerr ISCO. At χ = 0 it degenerates exactly to the Schwarzschild (non-spinning) case.
 
 ## Run
 
 **Desktop** (Vulkan / Metal / D3D12):
+
 ```sh
 cargo run --release
 ```
 
 **Web** (WebGPU — Chrome, Edge, recent Firefox/Safari):
+
 ```sh
 cargo install --locked trunk
 rustup target add wasm32-unknown-unknown
 trunk serve
 # open http://127.0.0.1:8080
 ```
+
 Release web build: `trunk build --release`. On a browser without WebGPU, the page shows a fallback message instead of a blank canvas.
 
 **Docker Dev Mode** (WebGPU containerized development):
+
 ```sh
 # Run with Docker Compose Watch for live hot-reloading
 docker compose -f docker-compose.dev.yml watch
@@ -77,22 +81,3 @@ src/
 assets/shaders/      WGSL: ray gen, Kerr RK45, disk, stars, planets, grid, skybox, upscale blit
 docs/superpowers/    design spec + implementation plan
 ```
-
-## Status
-
-**Phase 1 (Schwarzschild)** — shipped & validated: black shadow at the critical impact parameter, tilted Doppler accretion disk with the lensed Einstein halo (disk backside lensed up-and-over and down-under), procedural lensed starfield, lensed Flamm-paraboloid curvature grid, optional cubemap skybox, live egui Controls panel, desktop + web/WebGPU.
-
-**Phase 2 (Kerr)** — shipped & validated. The Schwarzschild fixed-step RK4 integrator is replaced by a Kerr geodesic with an **adaptive Dormand-Prince RK45** loop. A spin parameter χ ∈ [0,1] drives the Lense-Thirring frame-dragging term in the bending acceleration and a spin-dependent capture radius (Kerr horizon r₊); at χ = 0 the frame-dragging term vanishes and the integrator is exactly Schwarzschild. The disk inner edge tracks the Kerr ISCO (6M = 3 Rs at χ = 0 → M = Rs/2 at extremal spin). The CPU mirror (`src/physics.rs`) covers the Kerr derivative, the RK45 step, and the adaptive loop; 14 unit tests assert the spin = 0 degeneracy, the monotonically shrinking ISCO/horizon/capture radius, and capture/escape behavior. `render_scale` is wired through an offscreen render-to-texture + upscale pass.
-
-**Phase 3 (cinematic)** — shipped & validated:
-- **HDR pipeline** — full-screen quad chain: bright-pass → blur pyramid (2 down + 2 up) → composite with ACES filmic tone-map. `BloomQuality` (Off / Low / Medium / High) despawns/respawns the bloom sub-graph; Off composites scene-only ACES.
-- **Volumetric disk (3.1)** — fbm + ridged-multifractal turbulence replaces the zero-thickness slab; per-segment integration along the bent ray, scale-height H/R radial thickness, three `DiskQuality` tiers gating octave counts.
-- **Blackbody disk + relativistic jets (3.2)** — `DiskColorMode::Blackbody` keys a Tanner-Helland color to a Novikov-Thorne radial temperature profile shifted by the Kerr 4-velocity Doppler factor; bipolar relativistic jets along the spin axis are spin-gated (Blandford-Znajek: suppressed at χ = 0 regardless of the toggle).
-- **Anti-aliased lensed-image rings (3.3)** — `AaQuality` supersamples the higher-order ring wraps (1 / 2 / 4 sub-rays per pixel) to smooth the discrete bands into a continuous gradient.
-- **Kerr orbiting planets (3.4)** — lensed planets on Kerr equatorial orbits (`Ω_φ` Bardeen 1972) with Lense-Thirring nodal precession (`Ω_LT`), deterministically seeded (ChaCha8Rng), live respawn on seed/count/radius change.
-
-**Performance defaults** target ~60 FPS on discrete/integrated GPU (developed on Apple M4): desktop `steps=300`, `render_scale=0.75`, `bloom=High`, `disk=High`, `aa=Low`; web drops to `steps=200`, `render_scale=0.5`, `bloom=Low`, `disk=Low`, `aa=Off`. Release profile uses fat LTO + single codegen unit on desktop; the web profile overrides `opt-level="z"` for binary size.
-
-**Phase 4 (future work).** Full exact Kerr Cartesian pseudo-Hamiltonian (Σ/Δ/Carter-separable form) for sub-percent photon-orbit accuracy at high spin, retrograde spin, tilted spin axis, and adaptive integrator *order*. See `docs/superpowers/specs/2026-07-13-interstellar-blackhole-phase2-kerr-design.md` §9.
-
-> An earlier attempt (Stage A: exact Hamiltonian core, CPU + shader mirror) lives on the `phase4-exact-kerr-experimental` branch. Its CPU side reaches sub-percent `b_crit` accuracy (χ=0: 0.08%, χ=0.9: 1.5%) but the shader mirror has an unresolved CPU↔WGSL numerical divergence — the rendered disk shows no gravitational lensing despite the CPU trace showing correct 173° deflection. Resume there with per-pixel debug-color output to localize the divergence.
