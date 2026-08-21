@@ -441,9 +441,7 @@ mod tests {
         let original = cam;
 
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| section_camera(ui, &mut cam));
-        });
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| section_camera(ui, &mut cam));
 
         assert_eq!(cam.yaw, original.yaw, "idle Yaw slider wrote back");
         assert_eq!(cam.pitch, original.pitch, "idle Pitch slider wrote back");

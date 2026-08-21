@@ -89,6 +89,7 @@ impl OrbitCamera {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn orbit_controller(
     wants: Res<WantsPointer>,
     ui_activity: Res<UiPointerActivity>,
