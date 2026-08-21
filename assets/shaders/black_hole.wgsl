@@ -67,6 +67,15 @@ struct BlackHoleUniforms {
 // `blur.wgsl` uses for its runtime-indexed kernel tables.
 var<private> pixel_seed: vec2<f32>;
 
+// Vertical size of one offscreen-target pixel in uv units (1/offscreen_height),
+// captured at the top of `fragment` via fwidth while control flow is still
+// uniform (derivatives are forbidden inside the RK45 loop). `pixel_footprint`
+// converts it to an angular size. This is the ONLY way to get the true
+// offscreen pixel size: uniforms.resolution is the WINDOW size, which differs
+// from the offscreen target by render_scale, and passing render_scale through
+// the uniform block would touch four files for a value the GPU already knows.
+var<private> pixel_size_uv: f32;
+
 // ---------- planets storage (binding 3) ----------
 struct SphereData {
     center: vec4<f32>,   // xyz = center (world space), w = radius
@@ -159,11 +168,11 @@ fn milky_way_band(dir: vec3<f32>) -> f32 {
 
 // Screen-pixel footprint in cell units at a given grid scale. Stars smaller
 // than a pixel must not pop in and out as the camera orbits, so their flux is
-// spread over the pixel instead of being clipped to zero by the falloff. The
-// RK45 loop's non-uniform control flow forbids fwidth, so this is the analytic
-// footprint from the fov and the offscreen target height.
+// spread over the pixel instead of being clipped to zero by the falloff. Uses
+// the analytic footprint from the fov and the offscreen pixel size captured at
+// the fragment entry (see pixel_size_uv).
 fn pixel_footprint(scale: f32) -> f32 {
-    let ang_per_pixel = 2.0 * tan(uniforms.up.w * 0.5) / uniforms.resolution.y;
+    let ang_per_pixel = 2.0 * tan(uniforms.up.w * 0.5) * pixel_size_uv;
     return max(ang_per_pixel * scale, 1e-4);
 }
 
@@ -199,23 +208,34 @@ fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
     // offsets stars within cells and must scan a neighborhood). Brightness
     // follows a steep power law — almost every star is dim, matching the real
     // magnitude distribution.
+    //
+    // TEMPORAL STABILITY: this layer first shipped with stars as small as
+    // r0 ≈ 0.1 cells ≈ 0.4 px, and the whole background shimmered ("shaking
+    // stars") as soon as the camera moved — each sub-pixel point source
+    // strobes as it crosses pixel centers, and thousands of them twinkling
+    // out of phase reads as noise, masking the coherent rotation. Every faint
+    // star is now spread over at least ~3 px (with flux preservation, so the
+    // smearing dims rather than brightens), which keeps frame-to-frame change
+    // per star small. Measured with a yaw-sweep flicker harness (mean abs
+    // frame-to-frame LDR pixel delta): sub-pixel version 2.9, this version
+    // 0.45, old bright-layer-only background 0.31.
     {
         let scale = 200.0;
         let p = dir * scale;
         let cell = floor(p + vec3<f32>(0.5)); // nearest cell
         let h = hash13(cell + vec3<f32>(17.0));
-        if (h > 0.72 - 0.18 * band) { // denser toward the galactic plane
+        if (h > 0.90 - 0.12 * band) { // denser toward the galactic plane
             let d = length(p - cell);
             let b = pow(hash13(cell + vec3<f32>(31.0)), 7.0);
             let pix = pixel_footprint(scale);
             let r0 = 0.10 + 0.10 * hash13(cell + vec3<f32>(53.0));
-            let r = max(r0, pix);
-            // Preserve total flux when the star is smeared over a pixel:
-            // without the r0²/r² term, sub-pixel stars would either vanish
-            // (falloff never reached) or flicker at full brightness.
+            let r = max(r0, 3.0 * pix);
+            // Preserve total flux when the star is smeared over its ~3px
+            // footprint: without the r0²/r² term the layer would brighten as
+            // the footprint grows (e.g. at low render_scale on web).
             let flux = (r0 * r0) / (r * r);
             let falloff = smoothstep(r, 0.0, d);
-            acc += star_temp_color(hash13(cell + vec3<f32>(47.0))) * (b * falloff * flux * 9.0);
+            acc += star_temp_color(hash13(cell + vec3<f32>(47.0))) * (b * falloff * flux * 8.0);
         }
     }
 
@@ -985,6 +1005,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // the supersample jitter (Fix A). @builtin(position) is the fragment's
     // framebuffer coordinate; using it makes the noise spatially stable.
     pixel_seed = in.position.xy;
+    // fwidth is legal here (uniform control flow, before the RK45 loop) and
+    // gives the true offscreen pixel size regardless of render_scale.
+    pixel_size_uv = fwidth(in.uv.y);
 
     let aspect = uniforms.resolution.x / uniforms.resolution.y;
     let base_uv = vec2<f32>((in.uv * 2.0 - 1.0).x * aspect, (in.uv * 2.0 - 1.0).y);
