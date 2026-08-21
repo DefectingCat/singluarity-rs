@@ -108,7 +108,118 @@ fn hash13(p: vec3<f32>) -> f32 {
     return h.x;
 }
 
+// Value noise + fbm, built on hash13. Used only by the Milky Way nebula haze;
+// stars stay on the cheaper cell-hash path.
+fn vnoise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let c000 = hash13(i);
+    let c100 = hash13(i + vec3<f32>(1.0, 0.0, 0.0));
+    let c010 = hash13(i + vec3<f32>(0.0, 1.0, 0.0));
+    let c110 = hash13(i + vec3<f32>(1.0, 1.0, 0.0));
+    let c001 = hash13(i + vec3<f32>(0.0, 0.0, 1.0));
+    let c101 = hash13(i + vec3<f32>(1.0, 0.0, 1.0));
+    let c011 = hash13(i + vec3<f32>(0.0, 1.0, 1.0));
+    let c111 = hash13(i + vec3<f32>(1.0, 1.0, 1.0));
+    return mix(
+        mix(mix(c000, c100, u.x), mix(c010, c110, u.x), u.y),
+        mix(mix(c001, c101, u.x), mix(c011, c111, u.x), u.y),
+        u.z);
+}
+
+fn fbm(p_in: vec3<f32>, octaves: i32) -> f32 {
+    var p = p_in;
+    var v = 0.0;
+    var amp = 0.5;
+    for (var i = 0; i < octaves; i = i + 1) {
+        v += amp * vnoise(p);
+        p = p * 2.03 + vec3<f32>(11.3, 7.1, 5.7);
+        amp *= 0.5;
+    }
+    return v;
+}
+
+// Stellar-population color: cool-heavy like the real luminosity function —
+// mostly red/orange dwarfs, some sun-like whites, few hot blue giants.
+fn star_temp_color(t_in: f32) -> vec3<f32> {
+    let t = pow(t_in, 1.6);
+    var col = mix(vec3<f32>(1.0, 0.62, 0.42), vec3<f32>(1.0, 0.88, 0.72), smoothstep(0.0, 0.45, t));
+    col = mix(col, vec3<f32>(0.92, 0.94, 1.0), smoothstep(0.45, 0.75, t));
+    col = mix(col, vec3<f32>(0.68, 0.78, 1.0), smoothstep(0.75, 1.0, t));
+    return col;
+}
+
+// Galactic-plane window: 1 on the plane, Gaussian falloff off it. The normal
+// is fixed (tilted against the disk plane so the band never aligns with it).
+fn milky_way_band(dir: vec3<f32>) -> f32 {
+    let d = dot(dir, vec3<f32>(0.2857, 0.8571, 0.4286));
+    return exp(-d * d * 14.0);
+}
+
+// Screen-pixel footprint in cell units at a given grid scale. Stars smaller
+// than a pixel must not pop in and out as the camera orbits, so their flux is
+// spread over the pixel instead of being clipped to zero by the falloff. The
+// RK45 loop's non-uniform control flow forbids fwidth, so this is the analytic
+// footprint from the fov and the offscreen target height.
+fn pixel_footprint(scale: f32) -> f32 {
+    let ang_per_pixel = 2.0 * tan(uniforms.up.w * 0.5) / uniforms.resolution.y;
+    return max(ang_per_pixel * scale, 1e-4);
+}
+
+// Milky Way backdrop: domain-warped fbm clouds carved by dark dust lanes,
+// windowed to the galactic plane. Deliberately dim — it must sit below the
+// bloom threshold and read as haze, not as a bright object.
+fn nebula_color(dir: vec3<f32>) -> vec3<f32> {
+    let band = milky_way_band(dir);
+    if (band < 0.02) { return vec3<f32>(0.0); }
+    let p = dir * 6.5;
+    let warp = vec3<f32>(
+        fbm(p + vec3<f32>(0.0, 5.2, 1.3), 2),
+        fbm(p + vec3<f32>(5.2, 1.3, 2.8), 2),
+        fbm(p + vec3<f32>(1.3, 2.8, 0.0), 2));
+    let q = p + 2.0 * (warp - 0.5);
+    let cloud = fbm(q, 3);
+    let dust = fbm(q * 2.7 + vec3<f32>(3.7, 8.1, 1.9), 3);
+    var dens = max(cloud - 0.48, 0.0) * 2.4;
+    dens *= 1.0 - 0.85 * smoothstep(0.45, 0.68, dust);
+    // Warm gold toward the denser core, cool blue-purple in the thin wisps.
+    let col = mix(vec3<f32>(0.45, 0.28, 0.15), vec3<f32>(0.10, 0.14, 0.38),
+                  smoothstep(0.0, 0.28, cloud - 0.48));
+    return col * dens * band * 0.38;
+}
+
 fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
+    let band = milky_way_band(dir);
+    var acc = vec3<f32>(0.0);
+
+    // --- faint deep layer: the "deep space" dust of unresolved stars ---
+    // Each star sits exactly at its cell center, so evaluating only the single
+    // nearest cell can never clip it (unlike the bright layer below, which
+    // offsets stars within cells and must scan a neighborhood). Brightness
+    // follows a steep power law — almost every star is dim, matching the real
+    // magnitude distribution.
+    {
+        let scale = 200.0;
+        let p = dir * scale;
+        let cell = floor(p + vec3<f32>(0.5)); // nearest cell
+        let h = hash13(cell + vec3<f32>(17.0));
+        if (h > 0.72 - 0.18 * band) { // denser toward the galactic plane
+            let d = length(p - cell);
+            let b = pow(hash13(cell + vec3<f32>(31.0)), 7.0);
+            let pix = pixel_footprint(scale);
+            let r0 = 0.10 + 0.10 * hash13(cell + vec3<f32>(53.0));
+            let r = max(r0, pix);
+            // Preserve total flux when the star is smeared over a pixel:
+            // without the r0²/r² term, sub-pixel stars would either vanish
+            // (falloff never reached) or flicker at full brightness.
+            let flux = (r0 * r0) / (r * r);
+            let falloff = smoothstep(r, 0.0, d);
+            acc += star_temp_color(hash13(cell + vec3<f32>(47.0))) * (b * falloff * flux * 9.0);
+        }
+    }
+
+    // --- bright layer: resolvable stars, 3×3×3 neighborhood scan ---
     // The unit-sphere direction is hashed into a 3D cell grid. A pixel's ray
     // usually sits near a cell boundary, so evaluating only the home cell clips
     // any star whose center lies in a neighbor — that clip is what made stars
@@ -116,42 +227,52 @@ fn star_color(dir: vec3<f32>, intensity: f32) -> vec3<f32> {
     // edge, so the falloff could never reach zero and the visible shape was
     // just the cell's bounding box. Scan the 3×3×3 neighborhood so each star's
     // radial falloff extends across the whole cell it lives in.
-    let scale = 80.0;
-    let p = dir * scale;
-    let base = floor(p);
-    let threshold = 0.985;
-    // Brightest contributor wins: `best` = (brightness, r, g, b).
-    var best = vec4<f32>(0.0);
-    for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
-        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-                let cell = base + vec3<f32>(f32(dx), f32(dy), f32(dz));
-                let h = hash13(cell);
-                if (h <= threshold) { continue; }
-                let b = (h - threshold) / (1.0 - threshold);
-                let center = cell + vec3<f32>(0.5);
-                let dist = length(p - center); // Euclidean → round, never square
-                let col = mix(vec3<f32>(0.6, 0.7, 1.0), vec3<f32>(1.0, 0.9, 0.7), b);
-                // Both paths share the same brightness-driven radius and the
-                // same gain, so toggling AA only softens the edge — it does not
-                // change peak brightness or visible count. Before, the AA path
-                // used a larger radius (up to 0.65 vs 0.5), a heavier gain
-                // (4.0 vs 3.0), and a slow-decaying Gaussian whose long tail
-                // lifted many dim stars above the visibility floor — that's
-                // what made AA look like "bigger and more" stars.
-                let radius = 0.25 + b * 0.4;
-                let falloff = select(
-                    smoothstep(radius, 0.0, dist),                 // hard edge
-                    exp(-4.6 * dist * dist / (radius * radius)),    // soft edge
-                    uniforms.star_aa != 0u);
-                let bright = b * falloff;
-                if (bright > best.x) {
-                    best = vec4<f32>(bright, col.r, col.g, col.b);
+    {
+        let scale = 80.0;
+        let p = dir * scale;
+        let base = floor(p);
+        let threshold = 0.985 - 0.012 * band; // slightly denser in the band
+        // Brightest contributor wins: `best` = (brightness, r, g, b).
+        var best = vec4<f32>(0.0);
+        for (var dz: i32 = -1; dz <= 1; dz = dz + 1) {
+            for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+                for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+                    let cell = base + vec3<f32>(f32(dx), f32(dy), f32(dz));
+                    let h = hash13(cell);
+                    if (h <= threshold) { continue; }
+                    let b_raw = (h - threshold) / (1.0 - threshold);
+                    // Power-law magnitudes: many dim stars, few heroes.
+                    let b = pow(b_raw, 2.5);
+                    let center = cell + vec3<f32>(0.5);
+                    let dist = length(p - center); // Euclidean → round, never square
+                    let col = star_temp_color(hash13(cell + vec3<f32>(7.7)));
+                    // Both paths share the same brightness-driven radius and the
+                    // same gain, so toggling AA only softens the edge — it does not
+                    // change peak brightness or visible count. Before, the AA path
+                    // used a larger radius (up to 0.65 vs 0.5), a heavier gain
+                    // (4.0 vs 3.0), and a slow-decaying Gaussian whose long tail
+                    // lifted many dim stars above the visibility floor — that's
+                    // what made AA look like "bigger and more" stars.
+                    let radius = 0.16 + b_raw * 0.42;
+                    let falloff = select(
+                        smoothstep(radius, 0.0, dist),                 // hard edge
+                        exp(-4.6 * dist * dist / (radius * radius)),    // soft edge
+                        uniforms.star_aa != 0u);
+                    // Bright stars get a soft halo; the bloom pass then lifts
+                    // the few heroes into a natural glare.
+                    let halo = exp(-9.0 * dist * dist) * b * b * 0.5;
+                    let bright = b * falloff + halo;
+                    if (bright > best.x) {
+                        best = vec4<f32>(bright, col.r, col.g, col.b);
+                    }
                 }
             }
         }
+        acc += best.yzw * best.x * 3.0;
     }
-    return best.yzw * best.x * 3.0 * intensity;
+
+    acc += nebula_color(dir);
+    return acc * intensity;
 }
 
 // --- skybox ---
