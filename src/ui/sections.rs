@@ -20,6 +20,17 @@ fn row(ui: &mut egui::Ui, label: &str, add_widget: impl FnOnce(&mut egui::Ui) ->
 // ============================ Always-open cards ============================
 
 pub fn section_camera(ui: &mut egui::Ui, cam: &mut OrbitCamera) {
+    // The camera sliders MUST use `SliderClamping::Edits`, not the egui default
+    // `Always`. With `Always`, `Slider::add_contents` calls
+    // `set_value(get_value())` on EVERY idle frame, and `set_value` rounds to
+    // `fixed_decimals` — so the live OrbitCamera got snapped to the slider's
+    // decimal grid each frame. Auto-orbit's per-frame yaw step (~0.0023 rad at
+    // 60 fps for the 45 s period) is below the 0.005 half-quantum of a
+    // 2-decimal grid, so yaw was pinned in place ("no rotation") while the
+    // frame-time-jittered residue strobed the starfield ("shaking stars").
+    // `Edits` clamps/rounds only on real user edits; idle frames never write
+    // back, and display formatting is unaffected.
+    let clamping = egui::SliderClamping::Edits;
     egui::Grid::new("camera_grid")
         .num_columns(2)
         .spacing([8.0, 4.0])
@@ -32,7 +43,8 @@ pub fn section_camera(ui: &mut egui::Ui, cam: &mut OrbitCamera) {
                     [140.0, 16.0],
                     egui::Slider::new(&mut cam.distance, 3.0..=200.0)
                         .suffix(" r_g")
-                        .fixed_decimals(1),
+                        .fixed_decimals(1)
+                        .clamping(clamping),
                 )
             });
             row(ui, "Yaw", |ui| {
@@ -40,7 +52,8 @@ pub fn section_camera(ui: &mut egui::Ui, cam: &mut OrbitCamera) {
                     [140.0, 16.0],
                     egui::Slider::new(&mut cam.yaw, -PI..=PI)
                         .suffix(" rad")
-                        .fixed_decimals(2),
+                        .fixed_decimals(2)
+                        .clamping(clamping),
                 )
             });
             row(ui, "Pitch", |ui| {
@@ -48,13 +61,16 @@ pub fn section_camera(ui: &mut egui::Ui, cam: &mut OrbitCamera) {
                     [140.0, 16.0],
                     egui::Slider::new(&mut cam.pitch, (-PI + 0.05)..=(PI - 0.05))
                         .suffix(" rad")
-                        .fixed_decimals(2),
+                        .fixed_decimals(2)
+                        .clamping(clamping),
                 )
             });
             row(ui, "FOV", |ui| {
                 ui.add_sized(
                     [140.0, 16.0],
-                    egui::Slider::new(&mut cam.fov, 0.3..=2.0).fixed_decimals(2),
+                    egui::Slider::new(&mut cam.fov, 0.3..=2.0)
+                        .fixed_decimals(2)
+                        .clamping(clamping),
                 )
             });
         });
@@ -392,4 +408,50 @@ pub fn section_grid(ui: &mut egui::Ui, params: &mut BlackHoleParams, enabled: bo
         enabled,
         egui::Slider::new(&mut params.grid_density, 0.1..=4.0).text("Density"),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for "auto-orbit broken: stars shake, no rotation".
+    ///
+    /// The camera sliders bind directly to the live `OrbitCamera` resource,
+    /// which `orbit_controller` also writes every frame. egui's default
+    /// `SliderClamping::Always` makes `Slider::add_contents` call
+    /// `set_value(get_value())` on every IDLE frame, and `set_value` rounds to
+    /// `fixed_decimals` — snapping the live camera to the slider's decimal
+    /// grid each frame. Auto-orbit's per-frame yaw step (~0.0023 rad at
+    /// 60 fps) is below the 0.005 half-quantum of the 2-decimal grid, so yaw
+    /// was pinned forever (no rotation) while the frame-time-jittered residue
+    /// strobed the starfield (shaking). The sliders now use
+    /// `SliderClamping::Edits`, so an idle UI frame must leave an off-grid
+    /// `OrbitCamera` bit-for-bit untouched.
+    #[test]
+    fn idle_camera_panel_does_not_mutate_camera() {
+        // Every value deliberately off its slider's decimal grid, in-range:
+        // under the old code the first idle frame rounds all four.
+        let mut cam = OrbitCamera {
+            yaw: -1.0623,    // 0.01 grid → would snap to -1.06
+            pitch: 0.1234,   // 0.01 grid → would snap to 0.12
+            distance: 30.04, // 0.1 grid → would snap to 30.0
+            fov: 1.007,      // 0.01 grid → would snap to 1.01
+            auto_rotate: true,
+        };
+        let original = cam;
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| section_camera(ui, &mut cam));
+        });
+
+        assert_eq!(cam.yaw, original.yaw, "idle Yaw slider wrote back");
+        assert_eq!(cam.pitch, original.pitch, "idle Pitch slider wrote back");
+        assert_eq!(
+            cam.distance, original.distance,
+            "idle Distance slider wrote back"
+        );
+        assert_eq!(cam.fov, original.fov, "idle FOV slider wrote back");
+        assert_eq!(cam.auto_rotate, original.auto_rotate);
+    }
 }
