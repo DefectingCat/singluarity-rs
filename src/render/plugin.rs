@@ -103,6 +103,8 @@ impl Plugin for BlackHolePlugin {
                     .load_collection::<ShaderAssets>(),
             )
             .init_resource::<crate::camera::OrbitCamera>()
+            .init_resource::<crate::camera::OrbitInteraction>()
+            .init_resource::<crate::camera::UiPointerActivity>()
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
             .init_resource::<crate::scene::planets::PlanetSystemDirty>()

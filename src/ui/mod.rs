@@ -146,6 +146,7 @@ pub fn ui_system(
     mut params: ResMut<crate::params::BlackHoleParams>,
     mut camera: ResMut<crate::camera::OrbitCamera>,
     mut wants: ResMut<crate::camera::WantsPointer>,
+    mut ui_activity: ResMut<crate::camera::UiPointerActivity>,
     mut planet_dirty: ResMut<crate::scene::planets::PlanetSystemDirty>,
     mut current_preset: Local<Preset>,
     mut just_applied: Local<bool>,
@@ -157,6 +158,7 @@ pub fn ui_system(
 
     let Ok(ctx) = contexts.ctx_mut() else {
         wants.0 = false;
+        ui_activity.0 = false;
         return;
     };
     if !ctx.egui_wants_keyboard_input()
@@ -304,5 +306,6 @@ pub fn ui_system(
     let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
     let over_panel = pointer_pos.is_some_and(|p| panel_rect.contains(p));
     let using = ctx.egui_is_using_pointer();
+    ui_activity.0 = using;
     wants.0 = over_panel || using;
 }

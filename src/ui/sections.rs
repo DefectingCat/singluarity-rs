@@ -24,6 +24,9 @@ pub fn section_camera(ui: &mut egui::Ui, cam: &mut OrbitCamera) {
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
+            row(ui, "Auto orbit", |ui| {
+                ui.checkbox(&mut cam.auto_rotate, "Enabled")
+            });
             row(ui, "Distance", |ui| {
                 ui.add_sized(
                     [140.0, 16.0],
