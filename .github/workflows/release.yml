@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  XUN_SSH_PORT: ${{ vars.XUN_SSH_PORT }}
 
 jobs:
   create-release:
@@ -148,7 +149,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           # Pipe image straight into xun's podman: load → recreate container → prune dangling layers.
           docker save localhost/singularity-web:"$TAG" localhost/singularity-web:latest \
-            | ssh -o StrictHostKeyChecking=yes root@xunrua.top \
+            | ssh -p "$XUN_SSH_PORT" -o StrictHostKeyChecking=yes root@xunrua.top \
             "podman load \
              && cd /root/docker/singularity \
              && docker compose up -d --force-recreate web \
