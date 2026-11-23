@@ -2,7 +2,7 @@
 
 A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.20. It traces a bent ray per pixel to produce gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
 
-The visual target is Gargantua from _Interstellar_: a black shadow surrounded by a tilted, glowing accretion disk whose back side is lensed up and over the hole (and down underneath), with one side brighter from relativistic Doppler beaming.
+The opening shot is inspired by Gargantua from _Interstellar_. The camera holds just below the accretion disk, with a warm, narrow foreground band and two lensed arcs around the shadow. Bright gas streams shear as they move around the disk, with faster flow near the inner edge.
 
 The ray model combines Schwarzschild bending with a leading-order Lense–Thirring frame-dragging term. The dimensionless spin χ ∈ [0,1] controls this term and sets the disk's inner edge via the prograde Kerr ISCO. At χ = 0 the frame-dragging term vanishes.
 
@@ -31,14 +31,11 @@ Release web build: `trunk build --release`. On a browser without WebGPU, the pag
 
 - **Drag** (mouse) — orbit the camera around the hole.
 - **Scroll** — zoom (changes distance / impact parameter).
-- **Controls panel** (top-left) — live-tune every parameter:
-  - **Camera** — distance, yaw, pitch, FOV.
-  - **Black Hole** — spin (χ), with live ISCO (disk inner edge) and horizon (r+) readouts.
-  - **Accretion Disk** — outer radius, tilt, brightness, rotation speed (inner radius is spin-derived ISCO).
-  - **Doppler** — enable + strength of the relativistic beaming asymmetry.
-  - **Renderer** — integrator step count (quality/perf lever) and render scale (sub-resolution offscreen target).
-  - **Background** — procedural star intensity, optional cubemap skybox intensity.
-  - **Grid** — toggle the lensed Flamm-paraboloid curvature grid + density.
+- **Controls** (top right, or **H**) opens the inspector.
+  - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 28.5. Drag or scroll in the scene to interrupt it. **Auto orbit** enables continuous orbit.
+  - **Scene** — spin (χ), ISCO and horizon readouts, disk geometry and color. **Flow speed** controls the gas pattern rate, and `0×` freezes it in place.
+  - **Render** — ray steps, render scale, exposure, antialiasing, and bloom.
+  - **Effects** — gas bands, fine filaments, absorption, Doppler beaming, jets, planets, starfield, skybox and grid. The opening shot keeps the planets and jets off.
 
 Orbit input is automatically disabled while the cursor is over the panel.
 
@@ -51,13 +48,13 @@ A single full-screen quad carries a custom `Material2d` whose fragment shader, f
 3. At each accepted step tests the bent segment against the accretion disk (equatorial plane), lensed planets (storage buffer), and the Flamm paraboloid grid surface — compositing hits front-to-back. Rejected steps (error above tolerance, `dt` still above its floor) retry at a smaller step without consuming the ray's step budget.
 4. Terminates on capture (`r < r₊(χ)`, the spin-dependent horizon) or escape (samples the procedural starfield / cubemap along the bent final direction).
 
-The disk is tilted relative to the camera, so the back of the disk is lensed over the top and under the bottom of the shadow — the characteristic "halo." Doppler beaming brightens the approaching side. At spin > 0 the disk's inner edge tracks the Kerr ISCO (shrinking from 3 Rs at χ = 0 toward Rs/2 at extremal spin) and frame-dragging shears the halo off the line-of-sight axis.
+The front band and both lensed arcs sample the same disk-space flow. The volume integral treats light emission and absorption separately. The default Cinematic color model uses a warm inner layer, amber edges and restrained beaming. At spin > 0 the disk's inner edge tracks the Kerr ISCO (shrinking from 3 Rs at χ = 0 toward Rs/2 at extremal spin) and frame-dragging shears the halo off the line-of-sight axis.
 
 The CPU-side physics (`src/physics.rs`) mirrors the bending acceleration and the adaptive loop. Tests cover a reference Cash–Karp step, zero-spin equivalence to the Schwarzschild bending term, and representative capture and escape cases.
 
 ## Performance
 
-Defaults target ~60 FPS on a discrete/integrated GPU (developed on Apple M4). Desktop defaults to `render_scale=0.75`, rendering into a smaller offscreen target that is then upscaled to the window. On web, defaults drop to `steps=200` and `render_scale=0.5` for interactivity. If you need more FPS, lower **Steps** or **Render scale** in the Controls panel.
+Desktop uses `render_scale=0.75` and concentrates extra rays near the lensed ring. The Web default uses `steps=200`, `render_scale=0.5`, and one ray per pixel. Its Low disk quality keeps the main moving bands, and Low bloom uses a single highlight pass. Lower **Ray steps** or **Resolution scale** for higher frame rates on slower GPUs.
 
 ## Project layout
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- An optional ten-second camera flyby into the opening near-edge-on shot.
+
+### Changed
+
+- The default view holds the camera on the black hole, with portrait framing based on the shorter viewport axis.
+- The accretion disk has moving, differentially rotating gas bands and a warm cinematic color model. Jets and planets are optional in the opening scene.
+- Bloom has a soft highlight threshold and uses one, three, or five passes across the active quality tiers.
+
 ### Removed
 
 - Docker Compose development environment and its Make targets. Local Web development uses `make web`.

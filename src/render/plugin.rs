@@ -278,54 +278,21 @@ fn spawn_fullscreen_quad(
         RenderLayers::layer(0),
     ));
 
-    let levels = params.bloom_quality.levels();
-    let mut bloom_final_handle: Option<Handle<Image>> = None;
-
-    if levels > 0 {
-        // NOTE: when bloom is enabled the full 3-level pyramid (High) always
-        // runs here. Partial pyramid — Low = brightpass-only, Medium = 1 down +
-        // 1 up — is a future enhancement; for now this is a simple Off vs On
-        // gate. spawn_bloom_pipeline always emits the full pyramid when called.
-        bloom_final_handle = spawn_bloom_pipeline(
-            &mut commands,
-            &mut images,
-            &mut bp_materials,
-            &mut blur_materials,
-            &mut meshes,
-            &offscreen,
-            w,
-            h,
-        );
-    }
-
-    // Track the quality tier currently realized in the render graph. Must be
-    // set here (not via init_resource) so it matches the tiered params default
-    // (Off on web, High on desktop) rather than the enum's #[default].
+    let bloom_handle = spawn_bloom_pipeline(
+        &mut commands,
+        &mut images,
+        &mut bp_materials,
+        &mut blur_materials,
+        &mut meshes,
+        &offscreen,
+        UVec2::new(w, h),
+        &params,
+    );
     commands.insert_resource(AppliedBloomQuality(params.bloom_quality));
-
-    // --- Composite quad (draws HDR scene + bloom to the window, ACES tone-mapped) ---
-    // When bloom is off (BloomQuality::Off), bloom_final_handle is None and we
-    // fall back to a 1x1 black texture: the composite samples black, yielding a
-    // scene-only ACES composite (no bloom contribution).
-    let bloom_handle = bloom_final_handle.unwrap_or_else(|| {
-        // 1x1 black fallback — composite samples black, effectively scene-only ACES.
-        // 8 zero bytes = one Rgba16Float pixel (16 bits/channel × 4).
-        images.add(Image::new_fill(
-            bevy::render::render_resource::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            bevy::render::render_resource::TextureDimension::D2,
-            &[0, 0, 0, 0, 0, 0, 0, 0],
-            TextureFormat::Rgba16Float,
-            bevy::asset::RenderAssetUsages::default(),
-        ))
-    });
     let composite_mat = composite_materials.add(crate::render::material::CompositeMaterial {
         uniform: crate::render::material::CompositeUniform {
-            bloom_strength: 0.8,
-            exposure: 1.0,
+            bloom_strength: params.bloom_strength,
+            exposure: params.exposure,
             _pad0: 0.0,
             _pad1: 0.0,
         },
@@ -353,225 +320,184 @@ fn spawn_fullscreen_quad(
     ));
 }
 
-/// Spawns the bloom pipeline (brightpass + blur pyramid + bloom_final).
-/// Called at startup and when bloom_quality changes at runtime.
-///
-/// Pragmatic scope: this always emits the full 3-level pyramid (High) when
-/// called. Partial pyramids — Low (brightpass-only) and Medium (1 down + 1 up)
-/// — are a future enhancement; the caller simply does not invoke this for
-/// `BloomQuality::Off`. The `levels`-driven branching is intentionally absent.
-///
-/// Returns the `bloom_final` handle (the half-res texture the composite pass
-/// samples). Caller must fall back to a 1x1 black texture when it returns None.
+/// Builds the selected glare pyramid, returning the texture sampled by the composite.
 #[allow(clippy::too_many_arguments)]
 fn spawn_bloom_pipeline(
     commands: &mut Commands,
     images: &mut Assets<Image>,
-    bp_materials: &mut Assets<crate::render::material::BrightPassMaterial>,
-    blur_materials: &mut Assets<crate::render::material::BlurMaterial>,
+    bp_materials: &mut Assets<BrightPassMaterial>,
+    blur_materials: &mut Assets<BlurMaterial>,
     meshes: &mut Assets<Mesh>,
     offscreen: &Handle<Image>,
-    w: u32,
-    h: u32,
-) -> Option<Handle<Image>> {
-    // --- Bright-pass (bloom stage [2]): half-res float target ---
-    let bw = ((w as f32 * 0.5) as u32).max(1);
-    let bh = ((h as f32 * 0.5) as u32).max(1);
-    let bloom0 = images.add(Image::new_target_texture(
-        bw,
-        bh,
-        TextureFormat::Rgba16Float,
-        None,
-    ));
-    commands.spawn(BloomTarget0(bloom0.clone()));
+    scene_size: UVec2,
+    params: &crate::params::BlackHoleParams,
+) -> Handle<Image> {
+    let levels = params.bloom_quality.levels();
+    if levels == 0 {
+        return images.add(Image::new_fill(
+            Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            &[0; 8],
+            TextureFormat::Rgba16Float,
+            bevy::asset::RenderAssetUsages::default(),
+        ));
+    }
+
+    let quad = meshes.add(Rectangle::new(2.0, 2.0));
+    let half_size = (scene_size / 2).max(UVec2::ONE);
+    let bright = make_glare_target(images, half_size);
+    let bright_material = bp_materials.add(BrightPassMaterial {
+        uniform: super::material::BrightPassUniform {
+            threshold: params.bloom_threshold,
+            ..default()
+        },
+        source: offscreen.clone(),
+    });
+    commands.spawn(BloomTarget0(bright.clone()));
     commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(
-            bp_materials.add(crate::render::material::BrightPassMaterial {
-                uniform: crate::render::material::BrightPassUniform {
-                    threshold: 1.0,
-                    _pad0: 0.0,
-                    _pad1: 0.0,
-                    _pad2: 0.0,
-                },
-                source: offscreen.clone(),
-            }),
-        ),
-        Transform::default().with_scale(Vec3::new(bw as f32 / 2.0, bh as f32 / 2.0, 1.0)),
+        Mesh2d(quad.clone()),
+        MeshMaterial2d(bright_material),
+        Transform::from_scale((half_size.as_vec2() / 2.0).extend(1.0)),
         BrightPassQuad,
         QuadScaleFactor(0.5, 0.5),
         RenderLayers::layer(2),
     ));
     commands.spawn((
         Camera2d,
-        Camera {
-            order: -19,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
-            ..default()
-        },
-        RenderTarget::Image(bloom0.clone().into()),
+        glare_camera(-19),
+        RenderTarget::Image(bright.clone().into()),
         Msaa::Off,
         BrightPassCamera,
         Nudgable,
         RenderLayers::layer(2),
     ));
+    if levels == 1 {
+        return bright;
+    }
 
-    // --- Blur pyramid (bloom stages [3]/[4]): bloom_1, bloom_2 + down/up passes ---
-    let b1w = ((w as f32 * 0.25) as u32).max(1);
-    let b1h = ((h as f32 * 0.25) as u32).max(1);
-    let b2w = ((w as f32 * 0.125) as u32).max(1);
-    let b2h = ((h as f32 * 0.125) as u32).max(1);
-    let bloom1 = images.add(Image::new_target_texture(
-        b1w,
-        b1h,
+    let quarter_size = (scene_size / 4).max(UVec2::ONE);
+    let quarter = make_glare_target(images, quarter_size);
+    commands.spawn(BloomTarget1(quarter.clone()));
+    spawn_blur_pass(
+        commands,
+        blur_materials,
+        &quad,
+        &bright,
+        &quarter,
+        half_size,
+        quarter_size,
+        3,
+        0.25,
+        false,
+    );
+
+    if levels == 3 {
+        let eighth_size = (scene_size / 8).max(UVec2::ONE);
+        let eighth = make_glare_target(images, eighth_size);
+        commands.spawn(BloomTarget2(eighth.clone()));
+        spawn_blur_pass(
+            commands,
+            blur_materials,
+            &quad,
+            &quarter,
+            &eighth,
+            quarter_size,
+            eighth_size,
+            4,
+            0.125,
+            false,
+        );
+        spawn_blur_pass(
+            commands,
+            blur_materials,
+            &quad,
+            &eighth,
+            &quarter,
+            eighth_size,
+            quarter_size,
+            5,
+            0.25,
+            true,
+        );
+    }
+
+    let bloom = make_glare_target(images, half_size);
+    commands.spawn(BloomFinalTarget(bloom.clone()));
+    spawn_blur_pass(
+        commands,
+        blur_materials,
+        &quad,
+        &quarter,
+        &bloom,
+        quarter_size,
+        half_size,
+        6,
+        0.5,
+        true,
+    );
+    bloom
+}
+
+fn make_glare_target(images: &mut Assets<Image>, size: UVec2) -> Handle<Image> {
+    images.add(Image::new_target_texture(
+        size.x,
+        size.y,
         TextureFormat::Rgba16Float,
         None,
-    ));
-    let bloom2 = images.add(Image::new_target_texture(
-        b2w,
-        b2h,
-        TextureFormat::Rgba16Float,
-        None,
-    ));
-    commands.spawn(BloomTarget1(bloom1.clone()));
-    commands.spawn(BloomTarget2(bloom2.clone()));
+    ))
+}
 
-    // Down pass 0→1: samples bloom0 (half-res), writes bloom1 (quarter-res).
-    let down01_texel = Vec2::new(1.0 / bw as f32, 1.0 / bh as f32);
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
-            uniform: crate::render::material::BlurUniform {
-                mode: 0,
-                texel_size: down01_texel,
-                blend: 0.0,
-                _pad0: 0.0,
-            },
-            source: bloom0.clone(),
-        })),
-        Transform::default().with_scale(Vec3::new(b1w as f32 / 2.0, b1h as f32 / 2.0, 1.0)),
-        BlurQuad,
-        QuadScaleFactor(0.25, 0.25),
-        RenderLayers::layer(3),
-    ));
-    // Down pass 1→2: samples bloom1 (quarter), writes bloom2 (eighth).
-    let down12_texel = Vec2::new(1.0 / b1w as f32, 1.0 / b1h as f32);
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
-            uniform: crate::render::material::BlurUniform {
-                mode: 0,
-                texel_size: down12_texel,
-                blend: 0.0,
-                _pad0: 0.0,
-            },
-            source: bloom1.clone(),
-        })),
-        Transform::default().with_scale(Vec3::new(b2w as f32 / 2.0, b2h as f32 / 2.0, 1.0)),
-        BlurQuad,
-        QuadScaleFactor(0.125, 0.125),
-        RenderLayers::layer(4),
-    ));
-    // Up pass 2→1: samples bloom2 (eighth), writes bloom1 (quarter).
-    let up21_texel = Vec2::new(1.0 / b2w as f32, 1.0 / b2h as f32);
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
-            uniform: crate::render::material::BlurUniform {
-                mode: 1,
-                texel_size: up21_texel,
-                blend: 0.6,
-                _pad0: 0.0,
-            },
-            source: bloom2.clone(),
-        })),
-        Transform::default().with_scale(Vec3::new(b1w as f32 / 2.0, b1h as f32 / 2.0, 1.0)),
-        BlurQuad,
-        QuadScaleFactor(0.25, 0.25),
-        RenderLayers::layer(5),
-    ));
-    // Up pass 1→0: samples bloom1 (quarter), writes bloom_final (half).
-    let bfw = bw;
-    let bfh = bh;
-    let bloom_final = images.add(Image::new_target_texture(
-        bfw,
-        bfh,
-        TextureFormat::Rgba16Float,
-        None,
-    ));
-    commands.spawn(BloomFinalTarget(bloom_final.clone()));
-    let up10_texel = Vec2::new(1.0 / b1w as f32, 1.0 / b1h as f32);
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(2.0, 2.0))),
-        MeshMaterial2d(blur_materials.add(crate::render::material::BlurMaterial {
-            uniform: crate::render::material::BlurUniform {
-                mode: 1,
-                texel_size: up10_texel,
-                blend: 0.8,
-                _pad0: 0.0,
-            },
-            source: bloom1.clone(),
-        })),
-        Transform::default().with_scale(Vec3::new(bfw as f32 / 2.0, bfh as f32 / 2.0, 1.0)),
-        BlurQuad,
-        QuadScaleFactor(0.5, 0.5),
-        RenderLayers::layer(6),
-    ));
-    // Cameras: down01=-18, down12=-17, up21=-16, up10=-15.
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: -18,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
-            ..default()
-        },
-        RenderTarget::Image(bloom1.clone().into()),
-        Msaa::Off,
-        BlurCamera,
-        Nudgable,
-        RenderLayers::layer(3),
-    ));
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: -17,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
-            ..default()
-        },
-        RenderTarget::Image(bloom2.clone().into()),
-        Msaa::Off,
-        BlurCamera,
-        Nudgable,
-        RenderLayers::layer(4),
-    ));
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: -16,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
-            ..default()
-        },
-        RenderTarget::Image(bloom1.clone().into()),
-        Msaa::Off,
-        BlurCamera,
-        Nudgable,
-        RenderLayers::layer(5),
-    ));
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: -15,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.0, 0.0, 0.0)),
-            ..default()
-        },
-        RenderTarget::Image(bloom_final.clone().into()),
-        Msaa::Off,
-        BlurCamera,
-        Nudgable,
-        RenderLayers::layer(6),
-    ));
+fn glare_camera(order: isize) -> Camera {
+    Camera {
+        order,
+        clear_color: ClearColorConfig::Custom(Color::BLACK),
+        ..default()
+    }
+}
 
-    Some(bloom_final.clone())
+#[allow(clippy::too_many_arguments)]
+fn spawn_blur_pass(
+    commands: &mut Commands,
+    materials: &mut Assets<BlurMaterial>,
+    quad: &Handle<Mesh>,
+    source: &Handle<Image>,
+    target: &Handle<Image>,
+    source_size: UVec2,
+    target_size: UVec2,
+    layer: usize,
+    scale: f32,
+    upsample: bool,
+) {
+    let material = materials.add(BlurMaterial {
+        uniform: super::material::BlurUniform {
+            mode: u32::from(upsample),
+            texel_size: source_size.as_vec2().recip(),
+            blend: 0.85,
+            _pad0: 0.0,
+        },
+        source: source.clone(),
+    });
+    commands.spawn((
+        Mesh2d(quad.clone()),
+        MeshMaterial2d(material),
+        Transform::from_scale((target_size.as_vec2() / 2.0).extend(1.0)),
+        BlurQuad,
+        QuadScaleFactor(scale, scale),
+        RenderLayers::layer(layer),
+    ));
+    commands.spawn((
+        Camera2d,
+        glare_camera(layer as isize - 21),
+        RenderTarget::Image(target.clone().into()),
+        Msaa::Off,
+        BlurCamera,
+        Nudgable,
+        RenderLayers::layer(layer),
+    ));
 }
 
 fn resize_target(images: &mut Assets<Image>, handle: &Handle<Image>, size: UVec2) {
@@ -633,12 +559,10 @@ fn resize_offscreen(
     }
     if let Ok(target) = bloom2.single() {
         resize_target(&mut images, &target.0, eighth);
-#[allow(clippy::too_many_arguments)]
     }
     if let Ok(target) = bloom_final.single() {
         resize_target(&mut images, &target.0, half);
     }
-    mut disk_time: Local<f64>,
 
     for (transform, factor) in &mut quads {
         let size = scaled_size(size.as_vec2(), Vec2::new(factor.0, factor.1));
@@ -650,8 +574,6 @@ fn resize_offscreen(
         if let Some(source) = images.get(&material.source) {
             material.uniform.texel_size = source.size_f32().recip();
         }
-    // Integrate the rate so slowing or pausing the flow never resets its phase.
-    *disk_time += time.delta_secs_f64() * f64::from(params.disk_rotation_speed.max(0.0));
     }
     // Bevy emits image asset events after updating cameras. Mark projections
     // here so their cached target sizes match the resized textures this frame.
@@ -722,59 +644,37 @@ fn rebuild_bloom(
     if params.bloom_quality == applied.0 {
         return;
     }
-    // Despawn all bloom entities (cameras + quads).
-    for e in bloom_entities.iter() {
-        commands.entity(e).despawn();
-    }
-    // Despawn all bloom target markers (they are spawned as bare entities).
-    for e in bloom_targets.iter() {
-        commands.entity(e).despawn();
-    }
-    // Re-spawn at the new quality (or not at all, if Off).
     let Ok(win) = window.single() else {
         return;
     };
-    let UVec2 { x: w, y: h } = offscreen_size(win, params.render_scale);
-    let Ok(offscreen_t) = offscreen_target.single() else {
+    let Ok(offscreen) = offscreen_target.single() else {
         return;
     };
-    let offscreen = offscreen_t.0.clone();
-    let new_bloom = spawn_bloom_pipeline(
+    for entity in bloom_entities.iter().chain(bloom_targets.iter()) {
+        commands.entity(entity).despawn();
+    }
+    let bloom_handle = spawn_bloom_pipeline(
         &mut commands,
         &mut images,
         &mut bp_materials,
         &mut blur_materials,
         &mut meshes,
-        &offscreen,
-        w,
-        h,
+        &offscreen.0,
+        offscreen_size(win, params.render_scale),
+        &params,
     );
-    // Update the composite material's bloom handle. When the new quality is
-    // Off, spawn_bloom_pipeline returns None and we fall back to a 1x1 black
-    // texture so the composite samples black (scene-only ACES).
-    let bloom_handle = new_bloom.unwrap_or_else(|| {
-        images.add(Image::new_fill(
-            bevy::render::render_resource::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            bevy::render::render_resource::TextureDimension::D2,
-            &[0, 0, 0, 0, 0, 0, 0, 0],
-            TextureFormat::Rgba16Float,
-            bevy::asset::RenderAssetUsages::default(),
-        ))
-    });
     for (_, mat) in composite_materials.iter_mut() {
         mat.bloom = bloom_handle.clone();
     }
     commands.insert_resource(AppliedBloomQuality(params.bloom_quality));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mirror_params(
     camera: Res<crate::camera::OrbitCamera>,
     params: Res<crate::params::BlackHoleParams>,
     time: Res<Time>,
+    mut disk_time: Local<f64>,
     window: Query<&Window>,
     mut materials: ResMut<Assets<BlackHoleMaterial>>,
     mut brightpass_materials: ResMut<Assets<crate::render::material::BrightPassMaterial>>,
@@ -786,6 +686,8 @@ fn mirror_params(
     };
     let resolution = win.size().max(Vec2::ONE);
     let (eye, forward, right, up) = camera.basis();
+    // Integrate the rate so slowing or pausing the flow never resets its phase.
+    *disk_time += time.delta_secs_f64() * f64::from(params.disk_rotation_speed.max(0.0));
     for (_, mat) in materials.iter_mut() {
         let u = &mut mat.uniforms;
         u.eye = eye;
@@ -844,7 +746,7 @@ fn mirror_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::BlackHoleParams;
+    use crate::params::{BlackHoleParams, BloomQuality};
     use crate::ui::preset::{Preset, apply};
     use bevy::asset::{AssetEvent, AssetEventSystems};
     use bevy::ecs::schedule::common_conditions::run_once;
@@ -961,7 +863,7 @@ mod tests {
         );
         app.update();
         let world = app.world_mut();
-        let bloom = world.query::<&BloomFinalTarget>().single(world).unwrap();
+        let bloom = world.query::<&BloomTarget0>().single(world).unwrap();
         assert_eq!(target_size(world, &scene), UVec2::new(640, 360));
         assert_eq!(target_size(world, &bloom.0), UVec2::new(320, 180));
 
@@ -976,5 +878,33 @@ mod tests {
                 .read(events)
                 .any(|event| matches!(event, AssetEvent::Modified { .. }))
         );
+
+        for (quality, extract, blur) in [
+            (BloomQuality::Off, 0, 0),
+            (BloomQuality::Medium, 1, 2),
+            (BloomQuality::High, 1, 4),
+            (BloomQuality::Low, 1, 0),
+        ] {
+            app.world_mut()
+                .resource_mut::<BlackHoleParams>()
+                .bloom_quality = quality;
+            app.update();
+            let world = app.world_mut();
+            assert_eq!(
+                world.query::<&BrightPassCamera>().iter(world).count(),
+                extract
+            );
+            assert_eq!(world.query::<&BlurCamera>().iter(world).count(), blur);
+            let composites = world.resource::<Assets<CompositeMaterial>>();
+            let bloom = &composites.iter().next().unwrap().1.bloom;
+            assert_eq!(
+                target_size(world, bloom),
+                if extract == 0 {
+                    UVec2::ONE
+                } else {
+                    UVec2::new(320, 180)
+                },
+            );
+        }
     }
 }

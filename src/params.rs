@@ -170,8 +170,8 @@ impl Default for BlackHoleParams {
             planet_count: 0,
             spin: 0.0,
             star_aa: !cfg!(target_arch = "wasm32"),
-            bloom_threshold: 1.0,
-            bloom_strength: 0.8,
+            bloom_threshold: 0.95,
+            bloom_strength: 0.42,
             exposure: 1.0,
             bloom_quality: if cfg!(target_arch = "wasm32") {
                 BloomQuality::Low

@@ -27,7 +27,11 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let hdr = textureSample(scene_tex, scene_samp, in.uv).rgb;
     let bloom = textureSample(bloom_tex, bloom_samp, in.uv).rgb;
-    let combined = hdr + bloom * u.bloom_strength;
-    let mapped = aces_tonemap(combined * u.exposure);
-    return vec4<f32>(mapped, 1.0);
+    let exposed = (hdr + bloom * u.bloom_strength) * u.exposure;
+    let mapped = aces_tonemap(exposed);
+    let peak = max(exposed.r, max(exposed.g, exposed.b));
+    let ivory = vec3f(1.0, 0.975, 0.93) * max(mapped.r, max(mapped.g, mapped.b));
+    let highlight = mix(mapped, ivory, 0.16 * smoothstep(1.0, 4.0, peak));
+    let cool_shadow = mix(vec3f(0.88, 0.96, 1.16), vec3f(1.0), smoothstep(0.04, 0.2, peak));
+    return vec4f(highlight * cool_shadow, 1.0);
 }
