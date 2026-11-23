@@ -484,21 +484,24 @@ fn disk_flow(pos: vec3f, r: f32) -> f32 {
     return mix(previous, current, flow_blend);
 }
 
-fn disk_sample(r: f32, pos: vec3f, dir: vec3f, h: f32) -> DiskSample {
+fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSample {
     let inner = uniforms.disk_inner;
     let t = (r - inner) / (uniforms.disk_outer - inner);
     let edge = smoothstep(0.0, 0.08 * inner, r - inner) * (1.0 - smoothstep(0.52, 1.0, t));
     let r_ratio = inner / r;
     let radial = r_ratio * r_ratio;
-    let profile = exp(-h * h * 4.0);
+    let height_squared = height_samples * height_samples;
+    let absorption_profile = dot(exp(-5.0 * height_squared), vec2f(0.5));
     let flow = disk_flow(pos, r);
     let strands = mix(1.0, mix(0.18, 1.95, flow), uniforms.arm_strength);
-    // The hot midplane has structure in its emission. A broader, smoother
-    // layer absorbs some of the light without blotting out the far side.
-    let glowing_layer = profile * mix(0.32, 1.0, profile);
+    // Emission is concentrated near the midplane and fades before the
+    // absorbing layer ends, leaving contrast around the lower lensed arc.
+    let emission_profile = dot(exp(-13.0 * height_squared), vec2f(0.65));
+    let outer_emission = 1.0 - 0.88 * smoothstep(0.18, 0.72, t);
     let warmth = disk_color(r, pos, dir, r_ratio);
-    let emission = warmth * glowing_layer * edge * radial * strands * uniforms.disk_brightness;
-    let extinction = edge * profile * mix(0.08, 0.62, radial) * uniforms.density_strength;
+    let emission = warmth * emission_profile * edge * radial * outer_emission
+                 * strands * uniforms.disk_brightness;
+    let extinction = edge * absorption_profile * mix(0.035, 0.52, radial) * uniforms.density_strength;
     return DiskSample(emission, extinction);
 }
 
@@ -550,8 +553,12 @@ fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
         let p = mix(prev, new_pos, t);
         let r = r_of(p);
         if (r <= uniforms.disk_inner || r >= uniforms.disk_outer) { continue; }
-        composite_disk(disk_sample(r, p, dir, p.y / max(r * height_ratio, 1e-3)),
-                       path, accum_color, accum_alpha);
+        // Integrate the steep vertical profiles at two Gauss–Legendre
+        // points. The jittered position still samples the in-plane texture.
+        let center = t0 + dt * (f32(i) + 0.5);
+        let nodes = vec2f(center) + dt * vec2f(-0.28867513, 0.28867513);
+        let heights = (vec2f(prev.y) + dy * nodes) / max(r * height_ratio, 1e-3);
+        composite_disk(disk_sample(r, p, dir, heights), path, accum_color, accum_alpha);
     }
 }
 
@@ -820,7 +827,7 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
             if (disk_hit(prev, new_pos)) {
                 let ty = prev.y / (prev.y - new_pos.y);
                 let hit = mix(prev, new_pos, ty);
-                composite_disk(disk_sample(r_of(hit), hit, new_dir, 0.0),
+                composite_disk(disk_sample(r_of(hit), hit, new_dir, vec2f(0.0)),
                                0.85, &accum_color, &accum_alpha);
             }
         } else {

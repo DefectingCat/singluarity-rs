@@ -46,9 +46,9 @@ impl DiskQuality {
 /// Accretion disk color models for display and temperature exploration.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskColorMode {
-    Gradient,  // mode 0: white-hot to orange radial ramp
-    Blackbody, // mode 1: analytic blackbody + Kerr δ
+    Gradient, // mode 0: white-hot to orange radial ramp
     #[default]
+    Blackbody, // mode 1: analytic blackbody + Kerr δ
     Cinematic, // mode 2: warm highlights with restrained beaming
 }
 
@@ -147,12 +147,12 @@ impl Default for BlackHoleParams {
         Self {
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 14.8,
+            disk_outer: 17.5,
             disk_tilt: 0.0,
-            disk_brightness: 1.85,
+            disk_brightness: 1.70,
             disk_rotation_speed: 1.0,
             doppler_enabled: true,
-            doppler_strength: 0.3,
+            doppler_strength: 0.72,
             steps: if cfg!(target_arch = "wasm32") {
                 200
             } else {
@@ -163,13 +163,13 @@ impl Default for BlackHoleParams {
             } else {
                 0.75
             },
-            star_intensity: 0.26,
+            star_intensity: 0.48,
             grid_enabled: false,
             grid_density: 1.0,
             skybox_intensity: 0.0, // procedural stars only by default
             planet_count: 0,
             spin: 0.0,
-            star_aa: !cfg!(target_arch = "wasm32"),
+            star_aa: true,
             bloom_threshold: 0.95,
             bloom_strength: 0.42,
             exposure: 1.0,
@@ -178,21 +178,21 @@ impl Default for BlackHoleParams {
             } else {
                 BloomQuality::High
             },
-            disk_half_thickness: 0.03,
+            disk_half_thickness: 0.047,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 2.0,
             density_strength: 1.0,
             arm_count: 2.0,
             arm_tightness: 2.0,
-            arm_strength: 0.82,
+            arm_strength: 0.28,
             disk_quality: if cfg!(target_arch = "wasm32") {
                 DiskQuality::Low
             } else {
                 DiskQuality::High
             },
-            disk_color_mode: DiskColorMode::Cinematic,
-            disk_temp: 9700.0,
+            disk_color_mode: DiskColorMode::Blackbody,
+            disk_temp: 11000.0,
             jets_enabled: false,
             jets_strength: 1.0,
             // Web uses one ray everywhere. Desktop supersamples the rings.
