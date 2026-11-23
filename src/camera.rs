@@ -139,9 +139,8 @@ pub fn orbit_controller(
         if !wants.0 {
             for ev in motion.read() {
                 interaction.stop_flyby();
-                // View-follows-cursor: dragging right rotates the view right,
-                // dragging down tilts it down (inverts the old grab-the-scene mapping).
-                camera.yaw += ev.delta.x * 0.005;
+                // Orbit opposite the pointer so the foreground follows the drag.
+                camera.yaw -= ev.delta.x * 0.005;
                 // Keep yaw in (-π, π] so it never drifts out of the UI slider's range
                 // (which would make touching the slider snap the view). cos/sin are
                 // periodic, so the wrap is visually lossless.
@@ -150,7 +149,7 @@ pub fn orbit_controller(
                 // Full pitch range: the basis() has no gimbal pole now (right is yaw-only),
                 // so crossing ±π/2 no longer flips. The ±0.05 margin keeps eye off the
                 // exact origin-axis singularity where forward = ∓Y and yaw is undefined.
-                camera.pitch = (camera.pitch - ev.delta.y * 0.005)
+                camera.pitch = (camera.pitch + ev.delta.y * 0.005)
                     .clamp(-std::f32::consts::PI + 0.05, std::f32::consts::PI - 0.05);
             }
         }
@@ -195,7 +194,6 @@ pub fn orbit_controller(
         return;
     }
     if camera.auto_rotate && interaction.idle_seconds >= AUTO_ORBIT_IDLE_DELAY {
-        // Positive yaw is the same direction as dragging the view to the right.
         camera.yaw = (camera.yaw
             + time.delta_secs() * std::f32::consts::TAU / AUTO_ORBIT_PERIOD
             + std::f32::consts::PI)
@@ -353,20 +351,24 @@ mod tests {
     }
 
     #[test]
-    fn left_drag_applies_manual_rotation_without_auto_rotation() {
+    fn left_drag_moves_the_foreground_with_the_cursor() {
         let mut world = wheel_world(30.0);
-        let start = world.resource::<OrbitCamera>().yaw;
+        let (start_eye, _, _, _) = world.resource::<OrbitCamera>().basis();
+        // Start with a point centered in the view, in front of the orbit pivot.
+        let foreground = start_eye * 0.5;
         world
             .resource_mut::<ButtonInput<MouseButton>>()
             .press(MouseButton::Left);
         world.write_message(MouseMotion {
-            delta: Vec2::new(100.0, 0.0),
+            delta: Vec2::new(100.0, 100.0),
         });
 
         advance(&mut world, 0.5);
 
-        let actual = world.resource::<OrbitCamera>().yaw;
-        assert!((actual - (start + 0.5)).abs() < 1e-5, "got {actual}");
+        let (eye, _, right, up) = world.resource::<OrbitCamera>().basis();
+        let direction = foreground - eye;
+        assert!(direction.dot(right) > 0.0, "foreground should move right");
+        assert!(direction.dot(up) < 0.0, "foreground should move down");
     }
 
     #[test]
