@@ -32,7 +32,7 @@ Release web build: `trunk build --release`. On a browser without WebGPU, the pag
 - **Drag** (mouse) — orbit the camera around the hole.
 - **Scroll** — zoom (changes distance / impact parameter).
 - **Controls** (top right, or **H**) opens the inspector.
-  - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 22. Drag or scroll in the scene to interrupt it. **Auto orbit** enables continuous orbit.
+  - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 22. Drag or scroll in the scene to interrupt it. **Auto orbit** is on by default and rotates the camera while idle.
   - **Scene** — spin (χ), ISCO and horizon readouts, disk geometry and color. **Flow speed** controls the gas pattern rate, and `0×` freezes it in place.
   - **Render** — ray steps, render scale, exposure, antialiasing, and bloom.
   - **Effects** — bright clumps, fine filaments, absorption, Doppler beaming, jets, planets, starfield, skybox and grid. The opening shot keeps the planets and jets off.

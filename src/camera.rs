@@ -24,7 +24,7 @@ impl Default for OrbitCamera {
             pitch: 0.12,
             distance: 22.0,
             fov: 0.84,
-            auto_rotate: false,
+            auto_rotate: true,
         }
     }
 }
@@ -58,6 +58,7 @@ impl OrbitInteraction {
     pub(crate) fn start_flyby(&mut self, camera: &mut OrbitCamera) {
         *camera = OrbitCamera {
             distance: FLYBY_START_DISTANCE,
+            auto_rotate: camera.auto_rotate,
             ..default()
         };
         self.flyby_elapsed = Some(0.0);
@@ -250,9 +251,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_orbit_starts_immediately_at_fixed_rate() {
+    fn auto_orbit_starts_immediately_at_fixed_rate_by_default() {
         let mut world = wheel_world(30.0);
-        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         let start = world.resource::<OrbitCamera>().yaw;
 
         advance(&mut world, 0.5);
@@ -268,7 +268,6 @@ mod tests {
     #[test]
     fn wheel_interaction_pauses_then_resumes_after_idle_delay() {
         let mut world = wheel_world(30.0);
-        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         advance(&mut world, 0.5);
         let paused_at = world.resource::<OrbitCamera>().yaw;
 
@@ -283,7 +282,6 @@ mod tests {
     #[test]
     fn active_ui_interaction_pauses_auto_orbit() {
         let mut world = wheel_world(30.0);
-        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         world.resource_mut::<UiPointerActivity>().0 = true;
         let start = world.resource::<OrbitCamera>().yaw;
 
@@ -293,13 +291,14 @@ mod tests {
     }
 
     #[test]
-    fn default_camera_holds_its_framing() {
-        let default_camera = OrbitCamera::default();
-        let mut world = wheel_world(default_camera.distance);
+    fn disabling_auto_orbit_holds_the_camera_framing() {
+        let mut world = wheel_world(30.0);
+        world.resource_mut::<OrbitCamera>().auto_rotate = false;
+        let start = *world.resource::<OrbitCamera>();
 
         advance(&mut world, 1.0);
 
-        assert!(*world.resource::<OrbitCamera>() == default_camera);
+        assert!(*world.resource::<OrbitCamera>() == start);
     }
 
     fn start_flyby(world: &mut World) {
@@ -309,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn flyby_eases_to_the_default_camera_and_stops() {
+    fn flyby_eases_to_the_default_camera_then_auto_orbit_resumes() {
         let mut world = wheel_world(5.0);
         start_flyby(&mut world);
         let near = OrbitCamera::default().distance;
@@ -324,21 +323,26 @@ mod tests {
             (FLYBY_START_DISTANCE + near) / 2.0
         );
         advance(&mut world, FLYBY_DURATION / 2.0);
-        advance(&mut world, FLYBY_DURATION);
 
         assert!(!world.resource::<OrbitInteraction>().flyby_active());
         assert!(*world.resource::<OrbitCamera>() == OrbitCamera::default());
+
+        advance(&mut world, 0.1);
+        assert!(world.resource::<OrbitCamera>().yaw > OrbitCamera::default().yaw);
     }
 
     #[test]
     fn zoom_cancels_the_flyby_at_the_manual_distance() {
         let mut world = wheel_world(5.0);
+        world.resource_mut::<OrbitCamera>().auto_rotate = false;
         start_flyby(&mut world);
         advance(&mut world, 1.0);
         let zoomed = scroll(&mut world, MouseScrollUnit::Line, &[1.0]);
         advance(&mut world, FLYBY_DURATION);
         assert!(!world.resource::<OrbitInteraction>().flyby_active());
-        assert_eq!(world.resource::<OrbitCamera>().distance, zoomed);
+        let camera = world.resource::<OrbitCamera>();
+        assert_eq!(camera.distance, zoomed);
+        assert!(!camera.auto_rotate);
     }
 
     #[test]
