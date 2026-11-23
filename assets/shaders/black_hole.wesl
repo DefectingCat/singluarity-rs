@@ -442,11 +442,10 @@ fn disk_color(r: f32, pos: vec3f, dir: vec3f, r_ratio: f32) -> vec3f {
         return temperature_color(radial_t) * mix(1.0, shift.y, strength);
     }
 
-    // Display palette with a soft warm-white core. Limit beaming so the
-    // receding side remains readable next to the shadow.
-    let warm = mix(vec3f(1.0, 0.88, 0.68), vec3f(1.0, 0.31, 0.075),
-                   smoothstep(0.0, 0.65, radial_t));
-    return warm * mix(1.0, clamp(shift.y, 0.30, 2.5), strength);
+    // Keep the inner disk gold as beaming brightens the approaching side.
+    let warm = mix(vec3f(1.0, 0.72, 0.38), vec3f(1.0, 0.30, 0.065),
+                   smoothstep(0.0, 0.60, radial_t));
+    return warm * mix(1.0, clamp(shift.y, 0.42, 1.45), strength);
 }
 
 fn disk_flow(r: f32, plane_dir: vec2f, radial_t: f32) -> f32 {
@@ -498,11 +497,17 @@ fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSam
     // absorbing layer ends, leaving contrast around the lower lensed arc.
     let emission_profile = dot(exp(-13.0 * height_squared), vec2f(0.65));
     let outer_emission = 1.0 - 0.88 * smoothstep(0.18, 0.72, t);
-    let warmth = disk_color(r, pos, dir, r_ratio);
-    let emission = warmth * emission_profile * edge * radial * outer_emission
-                 * strands * uniforms.disk_brightness;
+    let color = disk_color(r, pos, dir, r_ratio);
+    var emission = color * emission_profile * radial * outer_emission * strands;
+    if (uniforms.disk_color_mode == 2u) {
+        // Warm, diffuse outer gas beneath the brighter orbiting strands.
+        // Its falloff is gentler than the core so it fills the foreground
+        // without adding optical depth over the far side of the disk.
+        let diffuse_radial = 0.15 * r_ratio * smoothstep(0.04, 0.31, t);
+        emission += vec3f(1.0, 0.31, 0.07) * absorption_profile * diffuse_radial;
+    }
     let extinction = edge * absorption_profile * mix(0.035, 0.52, radial) * uniforms.density_strength;
-    return DiskSample(emission, extinction);
+    return DiskSample(emission * edge * uniforms.disk_brightness, extinction);
 }
 
 // Integrate constant emission and extinction over this sample's path length

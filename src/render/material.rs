@@ -5,7 +5,7 @@ use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 
-use crate::params::MAX_DISK_CLUMPS;
+use crate::params::{BlackHoleParams, MAX_DISK_CLUMPS};
 
 /// One 16-byte source, sampled by every disk intersection along a ray.
 #[derive(Clone, Copy, Default, ShaderType)]
@@ -78,6 +78,7 @@ pub struct BlackHoleUniforms {
 
 impl Default for BlackHoleUniforms {
     fn default() -> Self {
+        let params = BlackHoleParams::default();
         Self {
             eye: Vec3::new(0.0, 0.0, 30.0),
             _pad0: 0.0,
@@ -92,9 +93,9 @@ impl Default for BlackHoleUniforms {
             _pad3: 0.0,
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 17.5,
+            disk_outer: params.disk_outer,
             disk_tilt: 0.0,
-            disk_brightness: 1.70,
+            disk_brightness: params.disk_brightness,
             _pad4: 0.0,
             doppler_strength: 0.72,
             star_intensity: 0.48,
@@ -110,7 +111,7 @@ impl Default for BlackHoleUniforms {
             bloom_strength: 0.42,
             exposure: 1.0,
             _pad5: 0.0,
-            disk_half_thickness: 0.047,
+            disk_half_thickness: params.disk_half_thickness,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             clump_width: 0.064,
@@ -118,8 +119,8 @@ impl Default for BlackHoleUniforms {
             clump_count: 0,
             arm_tightness: 2.0,
             arm_strength: 0.8,
-            disk_quality: 3,    // High
-            disk_color_mode: 1, // Blackbody
+            disk_quality: 3, // High
+            disk_color_mode: params.disk_color_mode.as_u32(),
             disk_temp: 11000.0,
             jets_enabled: 0,
             jets_strength: 1.0,

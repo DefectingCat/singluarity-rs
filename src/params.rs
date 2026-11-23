@@ -48,9 +48,9 @@ impl DiskQuality {
 /// Accretion disk color models for display and temperature exploration.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskColorMode {
-    Gradient, // mode 0: white-hot to orange radial ramp
-    #[default]
+    Gradient,  // mode 0: white-hot to orange radial ramp
     Blackbody, // mode 1: analytic blackbody + Kerr δ
+    #[default]
     Cinematic, // mode 2: warm highlights with restrained beaming
 }
 
@@ -149,9 +149,9 @@ impl Default for BlackHoleParams {
         Self {
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 17.5,
+            disk_outer: 24.0,
             disk_tilt: 0.0,
-            disk_brightness: 1.70,
+            disk_brightness: 1.25,
             disk_rotation_speed: 1.0,
             doppler_enabled: true,
             doppler_strength: 0.72,
@@ -180,7 +180,7 @@ impl Default for BlackHoleParams {
             } else {
                 BloomQuality::High
             },
-            disk_half_thickness: 0.047,
+            disk_half_thickness: 0.075,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 2.0,
@@ -193,7 +193,7 @@ impl Default for BlackHoleParams {
             } else {
                 DiskQuality::High
             },
-            disk_color_mode: DiskColorMode::Blackbody,
+            disk_color_mode: DiskColorMode::default(),
             disk_temp: 11000.0,
             jets_enabled: false,
             jets_strength: 1.0,
