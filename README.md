@@ -2,7 +2,7 @@
 
 A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.20. It traces a bent ray per pixel to produce gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
 
-The opening shot is inspired by Gargantua from _Interstellar_. The camera holds just below the accretion disk, with a warm, narrow foreground band and two lensed arcs around the shadow. Bright gas streams shear as they move around the disk, with faster flow near the inner edge.
+The opening shot is inspired by Gargantua from _Interstellar_. The camera holds just above the accretion disk, with warm foreground gas and two lensed arcs around the shadow. Bright gas streams shear as they move around the disk, with faster flow near the inner edge.
 
 The ray model combines Schwarzschild bending with a leading-order Lense–Thirring frame-dragging term. The dimensionless spin χ ∈ [0,1] controls this term and sets the disk's inner edge via the prograde Kerr ISCO. At χ = 0 the frame-dragging term vanishes.
 
@@ -32,7 +32,7 @@ Release web build: `trunk build --release`. On a browser without WebGPU, the pag
 - **Drag** (mouse) — orbit the camera around the hole.
 - **Scroll** — zoom (changes distance / impact parameter).
 - **Controls** (top right, or **H**) opens the inspector.
-  - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 28.5. Drag or scroll in the scene to interrupt it. **Auto orbit** enables continuous orbit.
+  - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 22. Drag or scroll in the scene to interrupt it. **Auto orbit** enables continuous orbit.
   - **Scene** — spin (χ), ISCO and horizon readouts, disk geometry and color. **Flow speed** controls the gas pattern rate, and `0×` freezes it in place.
   - **Render** — ray steps, render scale, exposure, antialiasing, and bloom.
   - **Effects** — gas bands, fine filaments, absorption, Doppler beaming, jets, planets, starfield, skybox and grid. The opening shot keeps the planets and jets off.

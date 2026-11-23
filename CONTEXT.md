@@ -2,7 +2,7 @@
 
 ## Camera auto-orbit decision
 
-The camera opens on a stationary close view just below the disk. The Camera panel can start a ten-second flyby from distance 44 to the default 28.5, or enable a continuous 45-second orbit. Dragging or zooming the scene interrupts the flyby. Manual input and active UI controls pause continuous orbit, which resumes after 1.5 seconds of inactivity. The field of view follows the shorter viewport axis so portrait windows keep the main lensed arcs in frame.
+The camera opens on a stationary view about seven degrees above the disk. The Camera panel can start a ten-second flyby from distance 44 to the default 22, or enable a continuous 45-second orbit. Dragging or zooming the scene interrupts the flyby. Manual input and active UI controls pause continuous orbit, which resumes after 1.5 seconds of inactivity. The field of view follows the shorter viewport axis so portrait windows keep the main lensed arcs in frame.
 
 ## egui slider writeback gotcha (camera sliders must use `SliderClamping::Edits`)
 

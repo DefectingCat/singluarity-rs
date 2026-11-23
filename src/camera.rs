@@ -19,11 +19,11 @@ pub struct OrbitCamera {
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
-            // About 1.2° below the default tilted disk, revealing both lensed arcs.
-            yaw: -0.33,
-            pitch: -0.45,
-            distance: 28.5,
-            fov: 0.49,
+            // Look across the foreground from about 7° above the disk.
+            yaw: 0.0,
+            pitch: 0.12,
+            distance: 22.0,
+            fov: 0.84,
             auto_rotate: false,
         }
     }

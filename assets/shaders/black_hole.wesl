@@ -872,7 +872,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     pixel_size_uv = fwidth(in.uv.y);
 
     let aspect = uniforms.resolution.x / uniforms.resolution.y;
-    let base_uv = vec2<f32>((in.uv * 2.0 - 1.0).x * aspect, (in.uv * 2.0 - 1.0).y);
+    // The quad uses top-left UVs, while the ray basis points up in world space.
+    let base_uv = vec2f((2.0 * in.uv.x - 1.0) * aspect, 1.0 - 2.0 * in.uv.y);
     let center_ray = ray_direction(base_uv);
 
     // Supersample around the critical impact parameter. A wide margin covers

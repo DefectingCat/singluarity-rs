@@ -128,7 +128,7 @@ pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera, orbit: &mut OrbitInter
         &mut cam.distance,
         3.0..=200.0,
         1,
-        " r_g",
+        " r_s",
         false,
     );
     slider(ui, "Yaw", &mut cam.yaw, -PI..=PI, 2, " rad", false);
@@ -189,7 +189,7 @@ pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams) {
         &mut params.disk_outer,
         6.0..=50.0,
         1,
-        " r_g",
+        " r_s",
         false,
     );
     slider(
