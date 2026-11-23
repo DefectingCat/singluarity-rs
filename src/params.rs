@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+pub(crate) const MAX_DISK_CLUMPS: usize = 6;
+
 /// Bloom pyramid depth (number of bloom textures).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BloomQuality {
@@ -21,12 +23,12 @@ impl BloomQuality {
     }
 }
 
-/// Volumetric disk shading quality. Every tier retains the main rotating gas bands.
+/// Volumetric disk shading quality. Every tier retains the main rotating clumps.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskQuality {
     Off,    // flat fallback
-    Low,    // gas bands without fine filaments
-    Medium, // gas bands + filaments
+    Low,    // gas clumps without fine filaments
+    Medium, // gas clumps + filaments
     #[default]
     High, // finer volume integration and filament detail
 }
@@ -183,9 +185,9 @@ impl Default for BlackHoleParams {
             filament_sharpness: 2.0,
             density_freq: 2.0,
             density_strength: 1.0,
-            arm_count: 2.0,
+            arm_count: 4.0,
             arm_tightness: 2.0,
-            arm_strength: 0.28,
+            arm_strength: 0.8,
             disk_quality: if cfg!(target_arch = "wasm32") {
                 DiskQuality::Low
             } else {

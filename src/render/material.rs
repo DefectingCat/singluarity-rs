@@ -5,6 +5,17 @@ use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 
+use crate::params::MAX_DISK_CLUMPS;
+
+/// One 16-byte source, sampled by every disk intersection along a ray.
+#[derive(Clone, Copy, Default, ShaderType)]
+pub struct DiskClump {
+    pub radius_fraction: f32,
+    pub phase_at_birth: f32,
+    pub age: f32,
+    pub amplitude: f32,
+}
+
 /// GPU uniform: params + camera packed into one struct bound at binding 0.
 #[derive(Clone, ShaderType)]
 pub struct BlackHoleUniforms {
@@ -27,7 +38,7 @@ pub struct BlackHoleUniforms {
     pub disk_outer: f32,
     pub disk_tilt: f32,
     pub disk_brightness: f32,
-    pub disk_time: f32,
+    pub _pad4: f32,
     pub doppler_strength: f32,
     pub star_intensity: f32,
     pub skybox_intensity: f32,
@@ -47,9 +58,9 @@ pub struct BlackHoleUniforms {
     pub disk_half_thickness: f32,
     pub filament_freq: f32,
     pub filament_sharpness: f32,
-    pub density_freq: f32,
+    pub clump_width: f32,
     pub density_strength: f32,
-    pub arm_count: f32,
+    pub clump_count: u32,
     pub arm_tightness: f32,
     pub arm_strength: f32,
     pub disk_quality: u32,
@@ -62,6 +73,7 @@ pub struct BlackHoleUniforms {
     pub aa_samples: u32,
     pub _pad6: f32,
     pub _pad7: f32,
+    pub disk_clumps: [DiskClump; MAX_DISK_CLUMPS],
 }
 
 impl Default for BlackHoleUniforms {
@@ -83,7 +95,7 @@ impl Default for BlackHoleUniforms {
             disk_outer: 17.5,
             disk_tilt: 0.0,
             disk_brightness: 1.70,
-            disk_time: 0.0,
+            _pad4: 0.0,
             doppler_strength: 0.72,
             star_intensity: 0.48,
             skybox_intensity: 0.0,
@@ -101,11 +113,11 @@ impl Default for BlackHoleUniforms {
             disk_half_thickness: 0.047,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
-            density_freq: 2.0,
+            clump_width: 0.064,
             density_strength: 1.0,
-            arm_count: 2.0,
+            clump_count: 0,
             arm_tightness: 2.0,
-            arm_strength: 0.28,
+            arm_strength: 0.8,
             disk_quality: 3,    // High
             disk_color_mode: 1, // Blackbody
             disk_temp: 11000.0,
@@ -114,6 +126,7 @@ impl Default for BlackHoleUniforms {
             aa_samples: 1, // overridden by params.aa_quality each frame
             _pad6: 0.0,
             _pad7: 0.0,
+            disk_clumps: [DiskClump::default(); MAX_DISK_CLUMPS],
         }
     }
 }

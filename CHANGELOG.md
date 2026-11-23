@@ -13,9 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The default view holds the camera on the black hole, with portrait framing based on the shorter viewport axis.
-- The accretion disk has moving, differentially rotating gas bands and a warm cinematic color model. Jets and planets are optional in the opening scene.
+- The default view holds at 22 Schwarzschild radii, about 7° above the disk, with a 48° field of view along the shorter viewport axis.
+- The foreground disk and lensed arcs show the same orbiting, shearing bright clumps. Separate emission and absorption profiles smooth the arcs and reveal the lower arc. Jets and planets are optional in the opening scene.
 - Bloom has a soft highlight threshold and uses one, three, or five passes across the active quality tiers.
+
+### Fixed
+
+- Camera elevation now projects the disk on the correct side of the view.
 
 ### Removed
 

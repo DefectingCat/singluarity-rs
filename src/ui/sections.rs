@@ -5,7 +5,9 @@ use std::{f32::consts::PI, ops::RangeInclusive};
 use bevy_egui::egui::{self, Align, Layout, RichText, TextStyle, Ui};
 
 use crate::camera::{OrbitCamera, OrbitInteraction};
-use crate::params::{AaQuality, BlackHoleParams, BloomQuality, DiskColorMode, DiskQuality};
+use crate::params::{
+    AaQuality, BlackHoleParams, BloomQuality, DiskColorMode, DiskQuality, MAX_DISK_CLUMPS,
+};
 use crate::ui::style::{ACCENT, BORDER, MUTED_TEXT, SURFACE, TEXT};
 
 fn slider<Num: egui::emath::Numeric>(
@@ -424,7 +426,7 @@ fn section_turbulence(ui: &mut Ui, params: &mut BlackHoleParams) {
     });
     slider(
         ui,
-        "Band frequency",
+        "Radial frequency",
         &mut params.density_freq,
         0.2..=3.0,
         2,
@@ -442,10 +444,10 @@ fn section_turbulence(ui: &mut Ui, params: &mut BlackHoleParams) {
     );
     slider(
         ui,
-        "Flow clusters",
+        "Bright clumps",
         &mut params.arm_count,
-        0.0..=6.0,
-        2,
+        0.0..=MAX_DISK_CLUMPS as f32,
+        0,
         "",
         false,
     );

@@ -1,3 +1,4 @@
+use crate::params::MAX_DISK_CLUMPS;
 use crate::state::{AppState, LoadingProgress, ShaderAssets};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{CameraUpdateSystems, RenderTarget};
@@ -14,6 +15,7 @@ use bevy::transform::TransformSystems;
 use bevy_asset_loader::prelude::*;
 use bevy_egui::EguiPostUpdateSet;
 
+use super::disk_flow::disk_clumps;
 use super::material::{BlackHoleMaterial, BlurMaterial, BrightPassMaterial, CompositeMaterial};
 
 /// Lower bound for `render_scale`. Used to clamp the offscreen target resolution
@@ -688,6 +690,9 @@ fn mirror_params(
     let (eye, forward, right, up) = camera.basis();
     // Integrate the rate so slowing or pausing the flow never resets its phase.
     *disk_time += time.delta_secs_f64() * f64::from(params.disk_rotation_speed.max(0.0));
+    let clump_count = (params.arm_count.round() as usize).min(MAX_DISK_CLUMPS);
+    let clumps = disk_clumps(*disk_time, clump_count);
+    let clump_width = (0.064 * (2.0 / params.density_freq.max(0.2)).sqrt()).clamp(0.03, 0.12);
     for (_, mat) in materials.iter_mut() {
         let u = &mut mat.uniforms;
         u.eye = eye;
@@ -703,7 +708,6 @@ fn mirror_params(
         u.disk_outer = params.disk_outer;
         u.disk_tilt = params.disk_tilt;
         u.disk_brightness = params.disk_brightness;
-        u.disk_time = *disk_time as f32;
         u.doppler_strength = params.doppler_strength;
         u.star_intensity = params.star_intensity;
         u.skybox_intensity = params.skybox_intensity;
@@ -720,9 +724,10 @@ fn mirror_params(
         u.disk_half_thickness = params.disk_half_thickness;
         u.filament_freq = params.filament_freq;
         u.filament_sharpness = params.filament_sharpness;
-        u.density_freq = params.density_freq;
+        u.clump_width = clump_width;
         u.density_strength = params.density_strength;
-        u.arm_count = params.arm_count;
+        u.clump_count = clump_count as u32;
+        u.disk_clumps = clumps;
         u.arm_tightness = params.arm_tightness;
         u.arm_strength = params.arm_strength;
         u.disk_quality = params.disk_quality.as_u32();

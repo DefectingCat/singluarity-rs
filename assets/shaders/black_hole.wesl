@@ -1,6 +1,15 @@
 // Keep the ray integration and shading logic in this file.
 import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
+const MAX_DISK_CLUMPS: u32 = 6u;
+
+struct DiskClump {
+    radius_fraction: f32,
+    phase_at_birth: f32,
+    age: f32,
+    amplitude: f32,
+};
+
 struct BlackHoleUniforms {
     eye: vec4<f32>,
     forward: vec4<f32>,
@@ -14,7 +23,7 @@ struct BlackHoleUniforms {
     disk_outer: f32,
     disk_tilt: f32,
     disk_brightness: f32,
-    disk_time: f32,
+    _pad4: f32,
     doppler_strength: f32,
     star_intensity: f32,
     skybox_intensity: f32,
@@ -32,9 +41,9 @@ struct BlackHoleUniforms {
     disk_half_thickness: f32,
     filament_freq: f32,
     filament_sharpness: f32,
-    density_freq: f32,
+    clump_width: f32,
     density_strength: f32,
-    arm_count: f32,
+    clump_count: u32,
     arm_tightness: f32,
     arm_strength: f32,
     disk_quality: u32,
@@ -46,6 +55,7 @@ struct BlackHoleUniforms {
     aa_samples: u32,        // per-pixel supersample count (1/2/4); >1 antialiases the higher-order lensed-image rings
     _pad6: f32,             // explicit round-up to 16-byte uniform alignment
     _pad7: f32,             //   (matches BlackHoleUniforms in material.rs byte-for-byte)
+    disk_clumps: array<DiskClump, MAX_DISK_CLUMPS>,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
@@ -439,49 +449,40 @@ fn disk_color(r: f32, pos: vec3f, dir: vec3f, r_ratio: f32) -> vec3f {
     return warm * mix(1.0, clamp(shift.y, 0.30, 2.5), strength);
 }
 
-const FLOW_LIFETIME: f32 = 5.0;
-var<private> flow_age: f32;
-var<private> flow_epoch: f32;
-var<private> flow_blend: f32;
-
-// Periodic angular coordinates keep the texture continuous across atan2's seam.
-// The radial coordinate varies faster than azimuth, producing long gas streams.
-fn disk_pattern(angle: f32, radial: f32, epoch: f32) -> f32 {
-    let along = vec2f(cos(angle), sin(angle));
-    let cluster_scale = 0.85 + uniforms.arm_count * 0.62;
-    let shape = vec3f(along * cluster_scale, radial + along.x * 0.45 + along.y * 0.25);
-    let offset = vec3f(4.2, 1.6, 3.7) * (epoch % 127.0);
-    let cloud = vnoise(shape + offset);
-    // A drifting, asymmetric bright sector gives the eye something to track
-    // even where edge-on rays integrate several separate bands.
-    let sector = smoothstep(-0.40, 0.84, along.x * 0.82 + along.y * 0.57);
-    var flow = mix(smoothstep(0.24, 0.77, cloud), sector, 0.32);
-    if (uniforms.disk_quality >= 2u) {
-        let frequency = uniforms.filament_freq;
-        let detail = vec3f(shape.xy * 1.78, radial * 2.7) * frequency;
-        let ridge = 1.0 - abs(vnoise(detail + offset + vec3f(10.1)) * 2.0 - 1.0);
-        flow = mix(flow, flow * pow(ridge, uniforms.filament_sharpness), 0.33);
+fn disk_flow(r: f32, plane_dir: vec2f, radial_t: f32) -> f32 {
+    if (uniforms.clump_count == 0u || uniforms.arm_strength <= 0.0) {
+        return 0.0;
     }
-    return flow;
-}
-
-fn disk_flow(pos: vec3f, r: f32) -> f32 {
-    // Scale the orbital shear for display, with a soft inner limit to keep
-    // the brightest streams visible even when the ISCO shrinks at high spin.
-    // One turn takes about 9 s at r=6 and 22 s at r=12.
+    // Radius-dependent angular speed shears each finite-width source.
+    // The inner limit keeps the motion readable at very small ISCOs.
     let orbit_ratio = 7.8 / (r + 1.8);
     let omega = 0.71 * orbit_ratio * sqrt(orbit_ratio);
-    let radial = (r - uniforms.disk_inner) * (0.43 * uniforms.density_freq);
-    let angle = atan2(pos.z, pos.x) + uniforms.arm_tightness * 0.45 * log2(r / uniforms.disk_inner);
-    let phase = angle - flow_age * omega;
-    let current = disk_pattern(phase, radial, flow_epoch);
-    if (flow_blend >= 1.0) {
-        return current;
+    var emission = 0.0;
+    for (var i = 0u; i < MAX_DISK_CLUMPS; i += 1u) {
+        if (i >= uniforms.clump_count) { break; }
+        let clump = uniforms.disk_clumps[i];
+        let radial_offset = (radial_t - clump.radius_fraction) / uniforms.clump_width;
+        if (abs(radial_offset) >= 1.0 || clump.amplitude <= 0.0) { continue; }
+
+        let angle = clump.phase_at_birth + omega * clump.age
+                  + 0.12 * uniforms.arm_tightness * radial_offset;
+        let axis = vec2f(cos(angle), sin(angle));
+        let angular_edge = mix(0.986, 0.91, smoothstep(0.0, 7.0, clump.age));
+        let angular = smoothstep(angular_edge, 1.0, dot(plane_dir, axis));
+        if (angular <= 0.0) { continue; }
+
+        let radial = 1.0 - smoothstep(0.0, 1.0, abs(radial_offset));
+        var contrast = 1.0;
+        if (uniforms.disk_quality >= 2u) {
+            let along = dot(plane_dir, vec2f(-axis.y, axis.x));
+            let sample_pos = vec3f(6.0 * along, 2.6 * radial_offset, 19.0 * clump.radius_fraction);
+            let noise = vnoise(sample_pos * uniforms.filament_freq);
+            let ridge = 1.0 - abs(2.0 * noise - 1.0);
+            contrast = mix(0.70, 1.30, pow(ridge, uniforms.filament_sharpness));
+        }
+        emission += radial * angular * clump.amplitude * contrast;
     }
-    // Let adjacent generations crossfade in disk space so shear does not
-    // wind a single texture up into subpixel bands over a long session.
-    let previous = disk_pattern(phase - FLOW_LIFETIME * omega, radial, flow_epoch - 1.0);
-    return mix(previous, current, flow_blend);
+    return min(emission, 3.0);
 }
 
 fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSample {
@@ -492,8 +493,7 @@ fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSam
     let radial = r_ratio * r_ratio;
     let height_squared = height_samples * height_samples;
     let absorption_profile = dot(exp(-5.0 * height_squared), vec2f(0.5));
-    let flow = disk_flow(pos, r);
-    let strands = mix(1.0, mix(0.18, 1.95, flow), uniforms.arm_strength);
+    let strands = 1.0 + disk_flow(r, pos.xz / r, t) * uniforms.arm_strength;
     // Emission is concentrated near the midplane and fades before the
     // absorbing layer ends, leaving contrast around the lower lensed arc.
     let emission_profile = dot(exp(-13.0 * height_squared), vec2f(0.65));
@@ -539,7 +539,7 @@ fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
         if (t1 <= t0) { return; }
     }
 
-    // Low keeps the broad bands, while High integrates sharper filaments.
+    // Low retains the moving clumps, while higher tiers integrate finer filaments.
     const MAX_SAMPLES = 5u;
     let samples = min(2u + uniforms.disk_quality, MAX_SAMPLES);
     let dt = (t1 - t0) / f32(samples);
@@ -870,10 +870,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // framebuffer coordinate; using it makes the noise spatially stable.
     pixel_seed = in.position.xy;
     disk_jitter = hash13(vec3f(pixel_seed, 0.0));
-    let flow_time = uniforms.disk_time + FLOW_LIFETIME * 0.5;
-    flow_epoch = floor(flow_time / FLOW_LIFETIME);
-    flow_age = flow_time - flow_epoch * FLOW_LIFETIME;
-    flow_blend = smoothstep(0.0, FLOW_LIFETIME * 0.44, flow_age);
     // fwidth is legal here (uniform control flow, before the RK45 loop) and
     // gives the true offscreen pixel size regardless of render_scale.
     pixel_size_uv = fwidth(in.uv.y);
