@@ -4,308 +4,400 @@ mod sections;
 mod style;
 
 use bevy::prelude::*;
-use bevy_egui::egui;
-use egui::{LayerId, UiBuilder};
+use bevy_egui::egui::{self, Align, Align2, Button, Layout, RichText, Ui};
 
+use crate::camera::{OrbitCamera, UiPointerActivity, WantsPointer};
+use crate::params::BlackHoleParams;
+use crate::scene::planets::PlanetSystemDirty;
 use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
-use crate::ui::style::ACCENT_CYAN;
+use crate::ui::style::{ACCENT, MUTED_TEXT, TEXT, panel_frame};
 
-/// One-shot egui styling. Registered in `EguiPrimaryContextPass` with a
-/// `Local<bool>` guard so it retries until `ctx_mut()` first succeeds, then
-/// runs exactly once. Per-frame set_style/set_visuals would dirty layout
-/// caches every frame; this avoids that.
+/// Set the style once so subsequent frames can reuse egui's layout caches.
 pub fn setup_egui_style(mut contexts: bevy_egui::EguiContexts, mut done: Local<bool>) {
-    if *done {
-        return;
-    }
-    if let Ok(ctx) = contexts.ctx_mut() {
-        crate::ui::style::setup(ctx);
+    if !*done && let Ok(ctx) = contexts.ctx_mut() {
+        style::setup(ctx);
         *done = true;
     }
 }
 
-/// An always-open framed card. Title in cyan `RichText::strong().small()`.
-/// Used for the 4 most-tuned groups (Camera / Black Hole / Disk / Quality).
-fn group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::group(ui.style())
-        .inner_margin(8.0)
-        .corner_radius(6.0)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().window_stroke.color))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .small()
-                    .color(ACCENT_CYAN),
-            );
-            ui.add_space(2.0);
-            body(ui);
-        });
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq)]
+enum ControlTab {
+    #[default]
+    Camera,
+    Scene,
+    Render,
+    Effects,
 }
 
-/// A collapsible section (`default_open` controls initial state).
-/// Used for the 6 secondary groups. The body closure is only invoked when open.
-fn collapsing(
-    ui: &mut egui::Ui,
-    id: &str,
-    title: &str,
-    default_open: bool,
-    body: impl FnOnce(&mut egui::Ui),
-) {
-    egui::CollapsingHeader::new(title)
-        .default_open(default_open)
-        .id_salt(id)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            body(ui);
-        });
+impl ControlTab {
+    const TABS: [(Self, &'static str); 4] = [
+        (Self::Camera, "Camera"),
+        (Self::Scene, "Scene"),
+        (Self::Render, "Render"),
+        (Self::Effects, "Effects"),
+    ];
 }
 
-/// Collapsible section whose header hosts an enable toggle on the right.
-/// Used by Doppler / Jets / Grid / Planets (design §4.1). The body closure
-/// receives the current `enabled` state so it can `add_enabled` its rows.
-///
-/// State persistence is handled by `HeaderResponse::body`, which calls
-/// `CollapsingState::store` internally via `show_body_indented` (see egui
-/// 0.35 `containers/collapsing_header.rs`). `show_header` consumes the
-/// state, so there is no separate `store` call here.
-fn collapsing_with_toggle(
-    ui: &mut egui::Ui,
-    id: &str,
-    title: &str,
-    default_open: bool,
-    enabled: &mut bool,
-    body: impl FnOnce(&mut egui::Ui, bool),
-) {
-    let id = ui.make_persistent_id(id);
-    let state = egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        id,
-        default_open,
-    );
-    state
-        .show_header(ui, |ui| {
-            ui.checkbox(enabled, title);
-        })
-        .body(|ui| {
-            ui.set_width(ui.available_width());
-            body(ui, *enabled);
-        });
+#[derive(Default)]
+pub struct Controls {
+    tab: ControlTab,
+    collapsed: bool,
+    preset: Preset,
 }
 
-/// The top preset bar. `current` is the UI-layer state (which preset is
-/// shown as selected); `just_applied` is set for one frame after a preset
-/// is chosen, to skip the Custom-detection hash compare on that frame
-/// (applying a preset changes params; that change must not flip to Custom).
-fn preset_bar(
-    ui: &mut egui::Ui,
-    params: &mut crate::params::BlackHoleParams,
-    current: &mut Preset,
-    just_applied: &mut bool,
-    collapsed: &mut bool,
-) {
-    ui.horizontal(|ui| {
-        ui.label("Preset:");
-        let prev = *current;
-        egui::ComboBox::from_id_salt("preset_combo")
-            .selected_text(format!("{:?}", prev))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(current, Preset::Cinematic, "Cinematic");
-                ui.selectable_value(current, Preset::Performance, "Performance");
-                ui.selectable_value(current, Preset::Web, "Web");
-                ui.selectable_value(current, Preset::Custom, "Custom");
-            });
-        if *current != prev && *current != Preset::Custom {
-            // User picked a concrete preset → apply its bundle.
-            apply(*current, params);
-            *just_applied = true;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button("▶")
-                .on_hover_text("Collapse panel (Tab / H)")
-                .clicked()
-            {
-                *collapsed = true;
-            }
-            // Global reset-to-default for all params.
-            if ui.button("↺ all").clicked() {
-                *params = crate::params::BlackHoleParams::default();
-                *current = Preset::Custom;
-                *just_applied = true;
-            }
-        });
-    });
-    ui.separator();
-}
+const PRESETS: [(Preset, &str); 4] = [
+    (Preset::Custom, "Custom"),
+    (Preset::Cinematic, "Cinematic"),
+    (Preset::Performance, "Performance"),
+    (Preset::Web, "Web"),
+];
 
-#[allow(clippy::too_many_arguments)]
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
-    mut params: ResMut<crate::params::BlackHoleParams>,
-    mut camera: ResMut<crate::camera::OrbitCamera>,
-    mut wants: ResMut<crate::camera::WantsPointer>,
-    mut ui_activity: ResMut<crate::camera::UiPointerActivity>,
-    mut planet_dirty: ResMut<crate::scene::planets::PlanetSystemDirty>,
-    mut current_preset: Local<Preset>,
-    mut just_applied: Local<bool>,
-    mut last_hash: Local<Option<u64>>,
-    mut panel_collapsed: Local<bool>,
+    mut params: ResMut<BlackHoleParams>,
+    mut camera: ResMut<OrbitCamera>,
+    mut wants: ResMut<WantsPointer>,
+    mut ui_activity: ResMut<UiPointerActivity>,
+    mut planet_dirty: ResMut<PlanetSystemDirty>,
+    mut controls: Local<Controls>,
 ) {
-    // Local<Preset> defaults to Custom (Preset::default()).
-    // Local<Option<u64>> defaults to None — first-frame sentinel.
-
     let Ok(ctx) = contexts.ctx_mut() else {
         wants.0 = false;
         ui_activity.0 = false;
         return;
     };
-    if !ctx.egui_wants_keyboard_input()
-        && ctx.input(|i| i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::Tab))
-    {
-        *panel_collapsed = !*panel_collapsed;
+
+    let planets_before = planet_configuration(&params);
+    let rect = controls.show(ctx, &mut params, &mut camera);
+    if planets_before != planet_configuration(&params) {
+        planet_dirty.0 = true;
     }
 
-    // --- Custom-detection (skip on the frame a preset was just applied) ---
-    let now_hash = params_hash(&params);
-    if !*just_applied && last_hash.is_some() && now_hash != last_hash.unwrap() {
-        // Some preset-touched field changed by hand. If it no longer matches
-        // the current concrete preset's canonical bundle, flip to Custom.
-        let matches_any = matches!(
-            *current_preset,
-            Preset::Cinematic | Preset::Performance | Preset::Web
-        ) && canonical_hash(*current_preset) == now_hash;
-        if !matches_any && *current_preset != Preset::Custom {
-            *current_preset = Preset::Custom;
+    ui_activity.0 = ctx.egui_is_using_pointer();
+    wants.0 = ui_activity.0 || pointer_over_controls(ctx, rect);
+}
+
+fn planet_configuration(params: &BlackHoleParams) -> (bool, u32, f32, u32) {
+    (
+        params.planets_enabled,
+        params.planet_count_target,
+        params.planet_radius_factor,
+        params.planet_seed,
+    )
+}
+
+fn pointer_over_controls(ctx: &egui::Context, rect: egui::Rect) -> bool {
+    // The actual frame bounds cover hover and presses. Popups can extend
+    // beyond those bounds. The decorative shadow does not capture input.
+    ctx.input(|input| {
+        input
+            .pointer
+            .interact_pos()
+            .is_some_and(|pos| rect.contains(pos))
+    }) || (ctx.any_popup_open() && ctx.is_pointer_over_egui())
+}
+
+impl Controls {
+    fn show(
+        &mut self,
+        ctx: &egui::Context,
+        params: &mut BlackHoleParams,
+        camera: &mut OrbitCamera,
+    ) -> egui::Rect {
+        if !ctx.text_edit_focused() {
+            let tab_available = !ctx.egui_wants_keyboard_input();
+            let toggle = ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::NONE, egui::Key::H)
+                    || (tab_available && input.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
+            });
+            self.collapsed ^= toggle;
         }
+
+        let viewport = ctx.content_rect();
+        let narrow = viewport.width() <= 680.0;
+        let inset = if narrow { 12.0 } else { 20.0 };
+        if self.collapsed {
+            let button_size = egui::vec2(102.0, 36.0);
+            let size = button_size + egui::Vec2::splat(2.0);
+            return egui::Area::new(egui::Id::new("controls_launcher"))
+                .fixed_pos(egui::pos2(
+                    viewport.right() - inset - size.x,
+                    viewport.top() + inset,
+                ))
+                .default_size(size)
+                .fade_in(false)
+                .show(ctx, |ui| {
+                    ui.set_min_size(size);
+                    panel_frame(9).show(ui, |ui| {
+                        if ui
+                            .add_sized(button_size, Button::new("Controls").frame(false))
+                            .on_hover_text("Show controls (H / Tab)")
+                            .clicked()
+                        {
+                            self.collapsed = false;
+                        }
+                    });
+                })
+                .response
+                .rect;
+        }
+
+        let width = if narrow {
+            (viewport.width() - 2.0 * inset).clamp(0.0, 300.0)
+        } else {
+            (viewport.width() * 0.34).clamp(252.0, 300.0)
+        };
+        let (anchor, vertical_offset, height) = if narrow {
+            (
+                Align2::RIGHT_BOTTOM,
+                -inset,
+                (viewport.height() * 0.62).min(400.0),
+            )
+        } else {
+            (Align2::RIGHT_TOP, inset, viewport.height() - 2.0 * inset)
+        };
+        let rect = egui::Area::new(egui::Id::new("controls_inspector"))
+            .anchor(anchor, egui::vec2(-inset, vertical_offset))
+            .default_size(egui::vec2(width, height.max(0.0)))
+            .fade_in(false)
+            .show(ctx, |ui| {
+                ui.set_width(width);
+                self.inspector(ui, height, params, camera);
+            })
+            .response
+            .rect;
+        if !ctx.text_edit_focused()
+            && !ctx.any_popup_open()
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.collapsed = true;
+        }
+        rect
     }
-    *just_applied = false;
-    *last_hash = Some(now_hash);
 
-    // --- Chassis ---
-    // egui 0.35's Panel::show needs a parent `&mut Ui`, but bevy_egui's
-    // single-pass `EguiPrimaryContextPass` only hands us a `Context`. Create
-    // the top-level Ui manually (matches the bevy_egui side_panel example).
-    // `Context` is an `Arc`, so cloning it here is cheap.
-    let mut root_ui = egui::Ui::new(
-        ctx.clone(),
-        "controls_root".into(),
-        UiBuilder::new()
-            .layer_id(LayerId::background())
-            .max_rect(ctx.viewport_rect()),
-    );
-    let panel_response = if *panel_collapsed {
-        egui::Panel::right("controls_collapsed")
-            .resizable(false)
-            .show(&mut root_ui, |ui| {
+    fn inspector(
+        &mut self,
+        ui: &mut Ui,
+        max_height: f32,
+        params: &mut BlackHoleParams,
+        camera: &mut OrbitCamera,
+    ) {
+        panel_frame(16).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 18,
+                    right: 14,
+                    top: 14,
+                    bottom: 8,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(31.0);
+                        ui.label(RichText::new("Controls").heading().strong());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add_sized(
+                                    [31.0, 31.0],
+                                    Button::new(RichText::new("×").size(21.0).color(MUTED_TEXT))
+                                        .frame(true)
+                                        .frame_when_inactive(false),
+                                )
+                                .on_hover_text("Hide controls (H / Tab / Esc)")
+                                .clicked()
+                            {
+                                self.collapsed = true;
+                            }
+                        });
+                    });
+                });
+            self.tabs(ui);
+            ui.separator();
+
+            // Leave room for the fixed preset and reset controls at the bottom.
+            let body_height = (max_height - ui.min_size().y - 53.0).max(18.0);
+            let tab = self.tab;
+            egui::ScrollArea::vertical()
+                .id_salt(tab)
+                .max_height(body_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(18, 12))
+                        .show(ui, |ui| {
+                            use crate::ui::sections::*;
+
+                            ui.spacing_mut().item_spacing.y = 5.0;
+                            match tab {
+                                ControlTab::Camera => section_camera(ui, camera),
+                                ControlTab::Scene => section_scene(ui, params),
+                                ControlTab::Render => section_render(ui, params),
+                                ControlTab::Effects => section_effects(ui, params),
+                            }
+                        });
+                });
+            ui.separator();
+            self.preset_bar(ui, params);
+        });
+    }
+
+    fn tabs(&mut self, ui: &mut Ui) {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(14, 0))
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("◀ Controls")
-                        .on_hover_text("Expand panel (Tab / H)")
-                        .clicked()
-                    {
-                        *panel_collapsed = false;
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let width = ui.available_width() / ControlTab::TABS.len() as f32;
+                    for (tab, name) in ControlTab::TABS {
+                        let selected = self.tab == tab;
+                        let label = RichText::new(name).strong().color(if selected {
+                            TEXT
+                        } else {
+                            MUTED_TEXT
+                        });
+                        let response = ui.add_sized(
+                            [width, 33.0],
+                            Button::new(label)
+                                .frame(true)
+                                .frame_when_inactive(false)
+                                .truncate(),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::SelectableLabel,
+                                ui.is_enabled(),
+                                selected,
+                                name,
+                            )
+                        });
+                        if response.clicked() {
+                            self.tab = tab;
+                        }
+                        if selected {
+                            ui.painter().hline(
+                                response.rect.x_range(),
+                                response.rect.bottom() - 1.0,
+                                egui::Stroke::new(2.0, ACCENT),
+                            );
+                        }
                     }
                 });
-            })
-    } else {
-        egui::Panel::right("controls")
-            .default_size(300.0)
-            .size_range(260.0..=400.0)
-            .resizable(true)
-            .show(&mut root_ui, |ui| {
-                // Top bar (fixed).
-                preset_bar(
-                    ui,
-                    &mut params,
-                    &mut current_preset,
-                    &mut just_applied,
-                    &mut panel_collapsed,
-                );
+            });
+    }
 
-                // Section stack (scrolls).
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    use crate::ui::sections::*;
+    fn preset_bar(&mut self, ui: &mut Ui, params: &mut BlackHoleParams) {
+        if self.preset != Preset::Custom && params_hash(params) != canonical_hash(self.preset) {
+            self.preset = Preset::Custom;
+        }
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(17, 11))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(28.0);
+                    let label = ui.label(RichText::new("Preset").small().color(MUTED_TEXT));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let reset = ui
+                            .add(
+                                Button::new(RichText::new("Reset").color(MUTED_TEXT))
+                                    .frame(true)
+                                    .frame_when_inactive(false),
+                            )
+                            .on_hover_text("Reset scene and rendering parameters")
+                            .clicked();
 
-                    // --- Always-open cards ---
-                    group(ui, "Camera", |ui| section_camera(ui, &mut camera));
-                    group(ui, "Black Hole", |ui| section_black_hole(ui, &mut params));
-                    group(ui, "Accretion Disk", |ui| section_disk(ui, &mut params));
-                    group(ui, "Quality", |ui| section_quality(ui, &mut params));
+                        let previous = self.preset;
+                        let selected = PRESETS
+                            .iter()
+                            .find_map(|&(preset, name)| (preset == previous).then_some(name));
+                        egui::ComboBox::from_id_salt("preset")
+                            .selected_text(selected.unwrap_or_default())
+                            .width(ui.available_width())
+                            .wrap_mode(egui::TextWrapMode::Truncate)
+                            .show_ui(ui, |ui| {
+                                for (preset, name) in PRESETS {
+                                    ui.selectable_value(&mut self.preset, preset, name);
+                                }
+                            })
+                            .response
+                            .labelled_by(label.id);
 
-                    // --- Collapsing sections ---
-                    collapsing(ui, "turbulence", "Disk Turbulence", false, |ui| {
-                        section_turbulence(ui, &mut params)
+                        if reset {
+                            // The live count belongs to the GPU upload system.
+                            let planet_count = params.planet_count;
+                            *params = BlackHoleParams {
+                                planet_count,
+                                ..Default::default()
+                            };
+                            self.preset = Preset::Custom;
+                        } else if self.preset != previous {
+                            apply(self.preset, params);
+                        }
                     });
-
-                    // collapsing_with_toggle takes `&mut bool` for the header
-                    // checkbox AND a body closure that mutates `params`. Passing
-                    // `&mut params.<field>` plus a closure borrowing `&mut params`
-                    // is a double-mutable-borrow; copy the field out, pass a local
-                    // ref, then write it back. (All four are `bool` → Copy.)
-                    let mut en = params.doppler_enabled;
-                    collapsing_with_toggle(ui, "doppler", "Doppler", false, &mut en, |ui, en| {
-                        section_doppler(ui, &mut params, en)
-                    });
-                    params.doppler_enabled = en;
-
-                    let mut en = params.jets_enabled;
-                    collapsing_with_toggle(ui, "jets", "Jets", false, &mut en, |ui, en| {
-                        section_jets(ui, &mut params, en)
-                    });
-                    params.jets_enabled = en;
-
-                    // Planets: snapshot dirty-relevant fields before rendering so
-                    // we can detect changes (relocated from the old Planets block).
-                    let prev_planet = (
-                        params.planets_enabled,
-                        params.planet_count_target,
-                        params.planet_radius_factor,
-                        params.planet_seed,
-                    );
-                    let mut en = params.planets_enabled;
-                    collapsing_with_toggle(ui, "planets", "Planets", false, &mut en, |ui, en| {
-                        section_planets(ui, &mut params, en)
-                    });
-                    params.planets_enabled = en;
-                    let curr_planet = (
-                        params.planets_enabled,
-                        params.planet_count_target,
-                        params.planet_radius_factor,
-                        params.planet_seed,
-                    );
-                    if curr_planet != prev_planet {
-                        planet_dirty.0 = true;
-                    }
-
-                    collapsing(ui, "background", "Background", false, |ui| {
-                        section_background(ui, &mut params)
-                    });
-
-                    let mut en = params.grid_enabled;
-                    collapsing_with_toggle(ui, "grid", "Grid", false, &mut en, |ui, en| {
-                        section_grid(ui, &mut params, en)
-                    });
-                    params.grid_enabled = en;
                 });
-            })
-    };
+            });
+    }
+}
 
-    // Decide whether egui should own the pointer this frame, so the orbit
-    // camera can stand down. We can't rely on `ctx.egui_wants_pointer_input()`:
-    // this SidePanel is rendered on the background layer of a hand-rolled root
-    // `Ui` (the bevy_egui single-context pattern) and never registers an
-    // `Area`, so egui's `is_pointer_over_egui()` / `layer_id_at()` return `false`
-    // even while the cursor is squarely over the panel — wheel scroll then leaks
-    // straight through to the camera. Instead we test the pointer against the
-    // panel's own response rect (a deterministic geometric check), and keep
-    // `egui_is_using_pointer()` so dragging a slider/resize-handle still claims
-    // the pointer even if the cursor momentarily leaves the rect.
-    let panel_rect = panel_response.response.rect;
-    let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
-    let over_panel = pointer_pos.is_some_and(|p| panel_rect.contains(p));
-    let using = ctx.egui_is_using_pointer();
-    ui_activity.0 = using;
-    wants.0 = over_panel || using;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collapsed_controls_only_capture_the_launcher() {
+        let ctx = egui::Context::default();
+        style::setup(&ctx);
+        let mut controls = Controls::default();
+        let mut camera = OrbitCamera::default();
+        let mut params = BlackHoleParams::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 650.0));
+        let mut frame = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(viewport),
+                events,
+                ..Default::default()
+            };
+            let mut result = None;
+            let mut output = ctx.run_ui(input, |_| {
+                let rect = controls.show(&ctx, &mut params, &mut camera);
+                result = Some((rect, pointer_over_controls(&ctx, rect)));
+            });
+            output.textures_delta.clear();
+            result.unwrap()
+        };
+        let panel_point = egui::Event::PointerMoved(egui::pos2(981.0, 145.0));
+        frame(Vec::new());
+        let (inspector, over_inspector) = frame(vec![panel_point.clone()]);
+        assert!(over_inspector);
+        assert!(inspector.height() < viewport.height());
+
+        let h = egui::Event::Key {
+            key: egui::Key::H,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![h]);
+        let (launcher, over_collapsed_panel) = frame(vec![panel_point]);
+        assert!(launcher.height() <= 40.0);
+        assert!(launcher.width() <= 110.0);
+        assert!(!over_collapsed_panel);
+        let (next_launcher, over_launcher) =
+            frame(vec![egui::Event::PointerMoved(launcher.center())]);
+        assert!(
+            over_launcher,
+            "launcher moved from {launcher:?} to {next_launcher:?}"
+        );
+
+        for pressed in [true, false] {
+            frame(vec![egui::Event::PointerButton {
+                pos: launcher.center(),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+        }
+        let (reopened, _) = frame(Vec::new());
+        assert_eq!(reopened, inspector);
+    }
 }

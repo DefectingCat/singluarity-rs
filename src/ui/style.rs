@@ -1,85 +1,90 @@
-//! egui styling for the control panel. Deep-space cyan/orange theme,
-//! hand-applied over `Visuals::dark()`. See design spec §1.
-//!
-//! The `Shadow` struct packs fields into 8-bit integers,
-//! and the context style API is `set_theme` + `global_style_mut` (not the
-//! `ctx.style()`/`set_style()` of 0.34). See inline comments at each site.
+//! Shared egui styling for the floating controls.
 
 use bevy_egui::egui::{self, Color32, Stroke, TextStyle, Visuals};
 
-// --- Palette (single source of truth; referenced by every section helper) ---
-pub const ACCENT_CYAN: Color32 = Color32::from_rgb(90, 200, 255); // #5AC8FF
-pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(255, 140, 66); // #FF8C42
-pub const PANEL_FILL: Color32 = Color32::from_rgb(14, 16, 20); // #0E1014
-pub const EXTREME_BG: Color32 = Color32::from_rgb(8, 9, 12); // #08090C
-pub const MUTED_TEXT: Color32 = Color32::from_rgb(140, 140, 140); // read-only / disabled labels
+pub const PANEL_FILL: Color32 = Color32::from_rgb(28, 26, 24);
+pub const SURFACE: Color32 = Color32::from_rgb(40, 37, 33);
+pub const BORDER: Color32 = Color32::from_rgb(56, 51, 46);
+pub const TEXT: Color32 = Color32::from_rgb(242, 237, 229);
+pub const MUTED_TEXT: Color32 = Color32::from_rgb(188, 178, 167);
+pub const ACCENT: Color32 = Color32::from_rgb(221, 190, 151);
 
-/// Text sizes applied over egui's default `Proportional` family. No custom
-/// font binary is embedded (spec non-goal).
-pub fn text_styles() -> Vec<(TextStyle, f32)> {
-    vec![
-        (TextStyle::Body, 14.0),
-        (TextStyle::Monospace, 12.0),
-        (TextStyle::Heading, 16.0),
-        (TextStyle::Small, 11.0),
-    ]
+// The startup screen has its own palette.
+pub const ACCENT_CYAN: Color32 = Color32::from_rgb(90, 200, 255);
+pub const ACCENT_ORANGE: Color32 = Color32::from_rgb(255, 140, 66);
+pub const EXTREME_BG: Color32 = Color32::from_rgb(8, 9, 12);
+
+const HOVER: Color32 = Color32::from_rgb(51, 46, 41);
+const SLIDER_RAIL: Color32 = Color32::from_rgb(73, 66, 59);
+
+pub fn panel_frame(radius: u8) -> egui::Frame {
+    egui::Frame::new()
+        .fill(PANEL_FILL)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(radius)
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 7],
+            blur: 22,
+            spread: 0,
+            color: Color32::from_black_alpha(130),
+        })
 }
 
-/// The themed `Visuals`. Built fresh from `dark()` each call so it is
-/// independent of whatever egui's defaults evolve into.
-///
-/// Note: `animation_time` lives on `Style`, not `Visuals`, since egui 0.35;
-/// it is applied in [`setup`].
-pub fn sci_fi_visuals() -> Visuals {
-    let mut v = Visuals::dark();
-    v.panel_fill = PANEL_FILL;
-    v.extreme_bg_color = EXTREME_BG;
-    v.hyperlink_color = ACCENT_CYAN; // also used as the section-heading color by convention
-    v.selection.bg_fill = ACCENT_CYAN;
-    v.selection.stroke = Stroke::new(1.0, ACCENT_ORANGE);
+fn controls_visuals() -> Visuals {
+    let mut visuals = Visuals::dark();
+    visuals.override_text_color = Some(TEXT);
+    visuals.window_fill = PANEL_FILL;
+    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.faint_bg_color = SURFACE;
+    visuals.extreme_bg_color = SURFACE;
+    visuals.selection.bg_fill = ACCENT;
+    visuals.selection.stroke = Stroke::new(1.0, PANEL_FILL);
+    visuals.button_frame = false;
+    visuals.slider_trailing_fill = true;
+    visuals.handle_shape = egui::style::HandleShape::Circle;
 
-    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(30, 36, 48); // #1E2430
-    v.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(60, 70, 70)); // #3C4646
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(40, 50, 70); // #283246
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 220, 255)); // #C8DCFF
-    v.widgets.active.fg_stroke = Stroke::new(1.0, ACCENT_CYAN);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(50, 70, 100); // #324664
-    v.widgets.noninteractive.bg_stroke = Stroke::new(0.5, Color32::from_rgb(40, 46, 60)); // #282E3C
-
-    // egui 0.35's `epaint::Shadow` packs its fields into 8-bit integers
-    // (`offset: [i8; 2]`, `blur: u8`, `spread: u8`) to keep the struct at 8
-    // bytes. Use integer literals; the f32 form would not type-check.
-    v.window_shadow = egui::epaint::Shadow {
-        offset: [0, 4],
-        blur: 16,
-        spread: 0,
-        color: Color32::from_black_alpha(120),
-    };
-    v
+    let widgets = &mut visuals.widgets;
+    widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
+    widgets.noninteractive.fg_stroke.color = MUTED_TEXT;
+    widgets.inactive.bg_fill = SLIDER_RAIL;
+    widgets.inactive.weak_bg_fill = SURFACE;
+    widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    widgets.inactive.fg_stroke = Stroke::new(1.0, MUTED_TEXT);
+    widgets.inactive.corner_radius = 6.into();
+    widgets.hovered.bg_fill = ACCENT;
+    widgets.hovered.weak_bg_fill = HOVER;
+    widgets.hovered.bg_stroke = Stroke::new(1.0, MUTED_TEXT);
+    widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT);
+    widgets.hovered.corner_radius = 6.into();
+    widgets.hovered.expansion = 0.0;
+    widgets.active = widgets.hovered;
+    widgets.active.bg_stroke.color = ACCENT;
+    widgets.open = widgets.hovered;
+    visuals
 }
 
-/// Apply fonts + spacing + visuals to a context. Called exactly once from
-/// `setup_egui_style` (plugin.rs).
-///
-/// egui 0.35 replaced `ctx.style()` / `ctx.set_style()` with theme-scoped
-/// accessors. We pin the active theme to Dark and mutate the active `Style`
-/// in place; `Visuals` and `animation_time` are both fields of `Style`, so
-/// they go through the same closure. `text_styles` is now a public
-/// `BTreeMap` field (no `text_styles_mut()`).
+/// Applied once to the primary egui context.
 pub fn setup(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     ctx.global_style_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.slider_width = 150.0;
-        style.spacing.indent = 18.0;
-        style.spacing.button_padding = egui::vec2(10.0, 4.0);
-        style.spacing.indent_ends_with_horizontal_line = false;
+        style.spacing.item_spacing = egui::vec2(8.0, 5.0);
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        style.spacing.slider_rail_height = 3.0;
+        style.spacing.indent = 10.0;
+        style.spacing.scroll.bar_width = 5.0;
+        style.spacing.scroll.floating_width = 3.0;
         style.animation_time = 0.12;
-        for (ts, size) in text_styles() {
+        for (text_style, size) in [
+            (TextStyle::Body, 13.0),
+            (TextStyle::Button, 12.0),
+            (TextStyle::Monospace, 12.0),
+            (TextStyle::Heading, 22.0),
+            (TextStyle::Small, 12.0),
+        ] {
             style
                 .text_styles
-                .insert(ts, egui::FontId::proportional(size));
+                .insert(text_style, egui::FontId::proportional(size));
         }
-        style.visuals = sci_fi_visuals();
+        style.visuals = controls_visuals();
     });
 }
