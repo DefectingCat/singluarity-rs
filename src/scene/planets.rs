@@ -2,7 +2,7 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::render::material::{MAX_PLANETS, SphereData};
@@ -102,40 +102,33 @@ pub fn orbit_system(
 /// frame — the screen shows only the camera clear color (grey).
 ///
 /// Instead, mutate the existing asset in place. `GpuShaderBuffer::prepare_asset`
-/// (bevy_render 0.19 `storage.rs`) sees the changed CPU data, reuses the same
-/// GPU buffer, and `write_buffer`s the new contents — the handle stays stable,
-/// the GPU asset stays ready, and the draw proceeds.
+/// sees the changed CPU data and writes it into the existing GPU buffer.
 pub fn upload_planets(
     planets: Query<&Planet>,
     mut params: ResMut<crate::params::BlackHoleParams>,
     materials: Res<Assets<crate::render::material::BlackHoleMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    let mut data: Vec<SphereData> = planets
-        .iter()
-        .take(MAX_PLANETS)
-        .map(|p| SphereData {
-            center: p.center,
-            radius: p.radius,
-            color: p.color,
-            emissive: p.emissive as u32,
-            _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
-        })
-        .collect();
-    // Pad to MAX_PLANETS so the buffer size is constant (avoids reallocation churn).
-    data.resize(MAX_PLANETS, SphereData::default());
-    params.planet_count = planets.iter().count().min(MAX_PLANETS) as u32;
+    let mut data = [SphereData::default(); MAX_PLANETS];
+    let mut count = 0;
+    for (slot, planet) in data.iter_mut().zip(&planets) {
+        *slot = SphereData {
+            center: planet.center,
+            radius: planet.radius,
+            color: planet.color,
+            emissive: u32::from(planet.emissive),
+        };
+        count += 1;
+    }
+    params.planet_count = count;
 
     // Write into the existing buffer asset(s) the materials already reference.
     // The startup system pre-creates exactly one such buffer; we find it by the
     // materials' handles and mutate in place — never reallocate the handle.
-    // set_data moves a Vec<T> (encase treats Vec<T> as a runtime-sized array),
-    // matching the official bevy 0.19 storage_buffer example.
     for (_, mat) in materials.iter() {
         if let Some(mut buffer) = buffers.get_mut(&mat.planets) {
-            buffer.set_data(data.clone());
+            buffer.clear();
+            buffer.extend_from_slice(&data);
         }
     }
 }
@@ -169,17 +162,24 @@ pub fn spawn_planet_system(
     let mut rng = ChaCha8Rng::seed_from_u64(params.planet_seed as u64);
     let max = crate::render::material::MAX_PLANETS as u32;
     for _ in 0..params.planet_count_target.min(max) {
-        let inclination = rng.gen_range(0.0..PI);
-        let longitude = rng.gen_range(0.0..TAU);
-        let phase = rng.gen_range(0.0..TAU);
+        let inclination = rng.random_range(0.0..PI);
+        let longitude = rng.random_range(0.0..TAU);
+        let phase = rng.random_range(0.0..TAU);
         // 半径因子 = planet_radius_factor ± 0.25 (per-planet 散布).
         // orbit_position 用 r = radius_factor · disk_outer, 所以这个因子是
         // "盘外缘的倍数": 1.0 = 紧贴盘外, 1.5 = 盘外 50%. 默认滑条 1.3 让行星
         // 稳定在盘外, 散布保留 per-planet 半径多样性. 钳到 1.05 以上保证始终盘外.
-        let radius_factor = (params.planet_radius_factor + rng.gen_range(-0.25..0.25)).max(1.05);
+        let radius_factor = (params.planet_radius_factor + rng.random_range(-0.25..0.25)).max(1.05);
         // 颜色: 暖色行星 (橙/红/黄系), 避开蓝色 (易与背景星混淆)
-        let hue = rng.gen_range(0.02..0.13);
-        let color = hsv_to_rgb(hue, rng.gen_range(0.5..0.9), rng.gen_range(0.7..1.0));
+        let hue = rng.random_range(0.02..0.13);
+        let saturation = rng.random_range(0.5..0.9);
+        let mut brightness = rng.random_range(0.7..1.0);
+        // Rand 0.10 can round to the upper bound. Resample as in Rand 0.8 so
+        // existing seeds keep the same brightness and subsequent draws.
+        while brightness == 1.0 {
+            brightness = rng.random_range(0.7..1.0);
+        }
+        let color = hsv_to_rgb(hue, saturation, brightness);
         commands.spawn((
             OrbitParams {
                 radius_factor,
@@ -189,7 +189,7 @@ pub fn spawn_planet_system(
             },
             Planet {
                 center: Vec3::ZERO, // 首帧由 orbit_system 填
-                radius: rng.gen_range(0.8..1.6),
+                radius: rng.random_range(0.8..1.6),
                 color,
                 emissive: false,
             },

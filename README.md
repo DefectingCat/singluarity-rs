@@ -1,6 +1,6 @@
 # singularity-rs
 
-A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.19. Each pixel geodesic-ray-traces curved spacetime, producing gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
+A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.20. Each pixel geodesic-ray-traces curved spacetime, producing gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
 
 The visual target is Gargantua from _Interstellar_: a black shadow surrounded by a tilted, glowing accretion disk whose back side is lensed up and over the hole (and down underneath), with one side brighter from relativistic Doppler beaming.
 
@@ -78,6 +78,6 @@ src/
   web.rs             wasm glue: WebGPU detection + fallback message
   scene/planets.rs   Planet component + storage-buffer upload
   render/            BlackHolePlugin, material, offscreen + upscale cameras (render_scale)
-assets/shaders/      WGSL: ray gen, Kerr RK45, disk, stars, planets, grid, skybox, upscale blit
+assets/shaders/      WESL: ray gen, Kerr RK45, disk, stars, planets, grid, skybox, upscale blit
 docs/superpowers/    design spec + implementation plan
 ```

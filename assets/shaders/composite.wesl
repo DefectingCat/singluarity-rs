@@ -1,4 +1,4 @@
-#import bevy_sprite::mesh2d_vertex_output::VertexOutput
+import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 struct CompositeUniform {
     bloom_strength: f32,
@@ -7,11 +7,11 @@ struct CompositeUniform {
     _pad1: f32,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> u: CompositeUniform;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var scene_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var scene_samp: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var bloom_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var bloom_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> u: CompositeUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var scene_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var scene_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var bloom_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var bloom_samp: sampler;
 
 // ACES Narkowicz fit (5 ops, clamped to [0,1]).
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {

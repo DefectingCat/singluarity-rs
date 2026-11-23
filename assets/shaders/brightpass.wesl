@@ -1,4 +1,4 @@
-#import bevy_sprite::mesh2d_vertex_output::VertexOutput
+import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 struct BrightPassUniform {
     threshold: f32,
@@ -7,9 +7,9 @@ struct BrightPassUniform {
     _pad2: f32,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> u: BrightPassUniform;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> u: BrightPassUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var samp: sampler;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

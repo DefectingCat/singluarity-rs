@@ -186,7 +186,7 @@ pub fn ui_system(
     // --- Chassis ---
     // egui 0.35's Panel::show needs a parent `&mut Ui`, but bevy_egui's
     // single-pass `EguiPrimaryContextPass` only hands us a `Context`. Create
-    // the top-level Ui manually (matches bevy_egui 0.41's side_panel example).
+    // the top-level Ui manually (matches the bevy_egui side_panel example).
     // `Context` is an `Arc`, so cloning it here is cheap.
     let mut root_ui = egui::Ui::new(
         ctx.clone(),
@@ -295,7 +295,7 @@ pub fn ui_system(
     // Decide whether egui should own the pointer this frame, so the orbit
     // camera can stand down. We can't rely on `ctx.egui_wants_pointer_input()`:
     // this SidePanel is rendered on the background layer of a hand-rolled root
-    // `Ui` (the bevy_egui 0.41 single-context pattern) and never registers an
+    // `Ui` (the bevy_egui single-context pattern) and never registers an
     // `Area`, so egui's `is_pointer_over_egui()` / `layer_id_at()` return `false`
     // even while the cursor is squarely over the panel — wheel scroll then leaks
     // straight through to the camera. Instead we test the pointer against the

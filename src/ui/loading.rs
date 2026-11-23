@@ -115,7 +115,7 @@ pub fn loading_ui_system(
 
                             // Footer info
                             ui.label(
-                                egui::RichText::new("BEVY 0.19 | WEBGPU / WGPU ENGINE")
+                                egui::RichText::new("BEVY 0.20 | WEBGPU / WGPU ENGINE")
                                     .small()
                                     .color(Color32::from_rgb(80, 90, 110))
                                     .monospace(),

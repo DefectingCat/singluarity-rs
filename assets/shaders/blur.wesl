@@ -1,4 +1,4 @@
-#import bevy_sprite::mesh2d_vertex_output::VertexOutput
+import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 struct BlurUniform {
     mode: u32,           // 0 = downsample, 1 = upsample
@@ -7,9 +7,9 @@ struct BlurUniform {
     _pad0: f32,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> u: BlurUniform;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> u: BlurUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var samp: sampler;
 
 // 13-tap weighted kernel (Gaussian approximation for HDR bloom).
 // NOTE: naga rejects dynamic indexing of const arrays ("may only be indexed

@@ -124,15 +124,15 @@ pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
 }
 
 // ---- RK45 (Dormand-Prince) adaptive integrator ----
-// CPU mirror of the shader's `rk45_step` (black_hole.wgsl:260) and adaptive
-// loop (black_hole.wgsl:320-390). Keep these in lockstep with the shader: the
+// CPU mirror of the shader's `rk45_step` in `black_hole.wesl` and its adaptive
+// loop. Keep these in lockstep with the shader: the
 // Butcher-tableau coefficients, the dt_min forced-accept floor, and the
 // budget = accepted-steps-only semantics must all match, or the loop-level
 // capture/escape tests below pass on code the shader contradicts.
 
 /// Result of one Dormand-Prince step: the 5th-order solution advanced by `dt`,
 /// plus the position error estimate `|y5 - y4|` used for step-size control.
-/// Mirrors the shader's `RkStep` struct (black_hole.wgsl:254).
+/// Mirrors the shader's `RkStep` struct.
 pub struct RkStep {
     pub pos: Vec3,
     pub dir: Vec3,
@@ -141,7 +141,7 @@ pub struct RkStep {
 
 /// One Dormand-Prince RK45 step against the Kerr geodesic. `chi = a/M ∈ [0,1]`.
 /// At chi=0 the derivative reduces to `bending_accel`, so this is also the
-/// Phase 1 integrator step. Mirrors `rk45_step` in black_hole.wgsl:260-285.
+/// Phase 1 integrator step. Mirrors `rk45_step` in `black_hole.wesl`.
 ///
 /// **Implemented order note:** the per-stage `normalize(dir + …)` projection
 /// (faithful to the shader) makes the *realized* error estimate shrink between
@@ -219,7 +219,7 @@ pub fn rk45_step(pos: Vec3, dir: Vec3, dt: f32, chi: f32) -> RkStep {
 
 /// Classify a Kerr geodesic with the adaptive RK45 loop. Returns true if the
 /// ray is captured (crosses r < r+(chi)). Mirrors the shader's integration
-/// loop (black_hole.wgsl:320-390): budget = accepted steps, rejected steps
+/// loop: budget = accepted steps, rejected steps
 /// retry at smaller dt (down to dt_min, which is a forced-accept floor), and
 /// the capture radius is the spin-dependent horizon r+(chi) (= Rs at chi=0).
 ///

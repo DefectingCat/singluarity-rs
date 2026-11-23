@@ -1,15 +1,5 @@
-// All shader logic is inlined into this single file.
-//
-// HISTORY: the shader used to be split across several naga_oil modules
-// (ray_gen, geodesic, stars, disk, planets, grid, skybox) that each
-// `#define_import_path singularity::...` and were pulled into this file via
-// `#import singularity::...`. That compiled without error, but calling ANY
-// imported function at runtime produced no fragment output — the fullscreen
-// quad silently drew nothing and only the camera clear color (grey) showed.
-// (Local functions worked; only cross-module imports broke.) Rather than chase
-// the naga_oil composition bug, every function is inlined here. The standalone
-// module files still exist on disk but are no longer imported.
-#import bevy_sprite::mesh2d_vertex_output::VertexOutput
+// Keep the ray integration and shading logic in this file.
+import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 struct BlackHoleUniforms {
     eye: vec4<f32>,
@@ -58,7 +48,7 @@ struct BlackHoleUniforms {
     _pad7: f32,             //   (matches BlackHoleUniforms in material.rs byte-for-byte)
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
 
 // Per-pixel fragment coordinate, set at the top of `fragment` from
 // `in.position.xy` (the @builtin(position) frag coord). Used as a deterministic
@@ -79,13 +69,14 @@ var<private> pixel_size_uv: f32;
 // ---------- planets storage (binding 3) ----------
 struct SphereData {
     center: vec4<f32>,   // xyz = center (world space), w = radius
-    color: vec4<f32>,    // xyz = color, w = emissive flag
+    color: vec3<f32>,
+    emissive: u32,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<storage, read> planets: array<SphereData>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<storage, read> planets: array<SphereData>;
 
 // ---------- optional cubemap skybox (bindings 1 & 2) ----------
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var skybox: texture_cube<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var skybox_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var skybox: texture_cube<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var skybox_sampler: sampler;
 
 // ====================== inlined helpers ======================
 
@@ -788,8 +779,8 @@ fn planet_hit(prev: vec3<f32>, cur: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
             let n = normalize(hit_pos - center);
             let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
             let ndl = max(dot(n, light_dir), 0.0);
-            var col = s.color.xyz * (0.2 + 0.8 * ndl);
-            if (s.color.w > 0.5) { col = s.color.xyz; }
+            var col = s.color * (0.2 + 0.8 * ndl);
+            if (s.emissive != 0u) { col = s.color; }
             nearest_col = col;
             found = true;
         }

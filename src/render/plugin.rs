@@ -155,7 +155,7 @@ fn update_loading_progress(mut progress: ResMut<LoadingProgress>) {
     let frames = progress.warmup_frames;
     if frames < 5 {
         progress.progress = (frames as f32 / 5.0) * 0.4;
-        progress.status = "Loading WGSL Shader Assets...".to_string();
+        progress.status = "Loading WESL Shader Assets...".to_string();
     } else if frames < 15 {
         progress.progress = 0.4 + ((frames - 5) as f32 / 10.0) * 0.45;
         progress.status = "Initializing WebGPU Render Pipeline...".to_string();

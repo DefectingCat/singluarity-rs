@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM nginx:alpine
 # Platform-agnostic static files; nginx default config serves /usr/share/nginx/html at :80.
-# Bevy's WasmAssetReader fetches assets/shaders/*.wgsl over HTTP — trunk's copy-dir
+# Bevy's WasmAssetReader fetches assets/shaders/*.wesl over HTTP — trunk's copy-dir
 # (web/index.html) ships them into dist/ so they're present here.
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80

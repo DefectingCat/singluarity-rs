@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`singularity-rs` is a Rust 2024 / Bevy 0.19 real-time Kerr black-hole visualizer for native GPUs and browser WebGPU. The GPU shaders perform rendering and ray integration; `src/physics.rs` mirrors critical shader physics on the CPU for UI calculations and deterministic tests.
+`singularity-rs` is a Rust 2024 / Bevy 0.20 real-time Kerr black-hole visualizer for native GPUs and browser WebGPU. The GPU shaders perform rendering and ray integration; `src/physics.rs` mirrors critical shader physics on the CPU for UI calculations and deterministic tests.
 
 ## Architecture & Data Flow
 
@@ -10,7 +10,7 @@
 - `src/render/plugin.rs` is the composition root. It registers ECS resources/plugins/systems, drives `AppState::Loading -> Running`, creates render targets, and orders the black-hole, bloom, and composite passes.
 - Bevy ECS is both state management and dependency injection. Use `Resource` for shared state, `Component` for entity state, system parameters (`Res`, `ResMut`, `Query`, `Commands`, `MessageReader`) for dependencies, and `Local<T>` for system-private UI state. There is no service container or application async runtime.
 - Frame flow: egui/input mutate `BlackHoleParams` and `OrbitCamera`; planet systems update entities and a stable GPU storage buffer; `mirror_params` copies CPU state into material uniforms; ordered cameras render black hole -> bloom -> final composite.
-- The CPU/GPU boundary is load-bearing. Keep `src/render/material.rs` structs, padding, field order, bindings, and flag types byte-compatible with `assets/shaders/*.wgsl`. Preserve CPU/WGSL physics behavior when changing the Kerr integrator.
+- The CPU/GPU boundary is load-bearing. Keep `src/render/material.rs` structs, padding, field order, bindings, and flag types byte-compatible with `assets/shaders/*.wesl`. Preserve CPU/WGSL physics behavior when changing the Kerr integrator.
 - Preserve GPU asset handles and mutate assets in place. Replacing bound handles each frame can leave assets perpetually unready.
 
 ## Key Directories
@@ -18,7 +18,7 @@
 - `src/render/`: render plugin, material/uniform definitions, render targets, bloom pipeline.
 - `src/scene/`: planet components, deterministic generation/orbits, GPU buffer upload.
 - `src/ui/`: egui orchestration, sections, presets, loading UI, shared style.
-- `assets/shaders/`: primary ray-marching and post-processing WGSL shaders.
+- `assets/shaders/`: primary ray-marching and post-processing WESL shaders.
 - `tests/`: public-library integration tests; private behavior tests stay beside source modules.
 - `web/`: Trunk HTML entry and web asset/wasm optimization directives.
 - `.github/workflows/`: authoritative CI and tagged release automation.
@@ -52,7 +52,7 @@ cargo build --locked --release
 - Handle temporarily missing entities/assets with early-return `let Ok(...) else { return; }` or `if let`. No project-wide custom error abstraction exists.
 - Guard expensive structural work with state/dirty comparisons. Planet generation is deterministic and rebuilds only when dirty; bloom changes rebuild the pipeline.
 - Local `#[allow(clippy::too_many_arguments, clippy::type_complexity)]` is acceptable for inherently broad ECS system parameters; do not hide them behind bespoke context objects.
-- Treat comments about alignment/bindings, camera order/render layers, stable handles, and Bevy workarounds as invariants. The main shader is intentionally inlined; do not reintroduce naga_oil shader imports without proving compatibility.
+- Treat comments about alignment/bindings, camera order/render layers, stable handles, and Bevy workarounds as invariants. Keep the main shader’s ray integration and shading logic in one WESL file.
 - Camera sliders bound to auto-mutated `OrbitCamera` fields must use `SliderClamping::Edits`; default writeback can round values and stall auto-orbit (`CONTEXT.md`).
 
 ## Important Files
@@ -75,7 +75,7 @@ cargo build --locked --release
 - This is one Cargo package, not a workspace: explicit library `singularity_rs` plus implicit binary `singularity-rs`.
 - Use stable Rust with edition 2024. No exact toolchain is pinned. Keep `Cargo.lock` generated, committed, and unedited by hand.
 - Web development requires `wasm32-unknown-unknown`, Trunk, WebGPU, Binaryen/`wasm-opt`, and the target rustflags in `.cargo/config.toml`. `web/index.html` must retain both `data-wasm-opt-params` and the `copy-dir` for `assets/`; removing either can produce validation errors or shader 404s.
-- Native release builds embed assets; debug builds load WGSL from disk for rapid shader iteration.
+- Native release builds embed assets; debug builds load WESL from disk for rapid shader iteration.
 - Linux native builds need `pkg-config`, `libasound2-dev`, and `libudev-dev`. Use `make docker-test` if host Bevy dependencies are unavailable.
 - No `scripts/`, `build.rs`, custom rustfmt/clippy configuration, or Node/Bun package manager is used.
 

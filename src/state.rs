@@ -4,7 +4,7 @@ use bevy_asset_loader::prelude::*;
 /// Global application state machine.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
-    /// Initial asset loading, WGSL shader parsing, and pipeline warmup.
+    /// Initial asset loading, WESL shader parsing, and pipeline warmup.
     #[default]
     Loading,
     /// Main interactive black-hole rendering loop.
@@ -12,16 +12,16 @@ pub enum AppState {
 }
 
 /// Asset collection managed by `bevy_asset_loader`.
-/// Ensures all 4 WGSL shaders are loaded before transitioning states.
+/// Ensures all 4 WESL shaders are loaded before transitioning states.
 #[derive(AssetCollection, Resource)]
 pub struct ShaderAssets {
-    #[asset(path = "shaders/black_hole.wgsl")]
+    #[asset(path = "shaders/black_hole.wesl")]
     pub black_hole: Handle<Shader>,
-    #[asset(path = "shaders/brightpass.wgsl")]
+    #[asset(path = "shaders/brightpass.wesl")]
     pub brightpass: Handle<Shader>,
-    #[asset(path = "shaders/blur.wgsl")]
+    #[asset(path = "shaders/blur.wesl")]
     pub blur: Handle<Shader>,
-    #[asset(path = "shaders/composite.wgsl")]
+    #[asset(path = "shaders/composite.wesl")]
     pub composite: Handle<Shader>,
 }
 

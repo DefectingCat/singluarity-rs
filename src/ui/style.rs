@@ -1,7 +1,7 @@
 //! egui styling for the control panel. Deep-space cyan/orange theme,
 //! hand-applied over `Visuals::dark()`. See design spec §1.
 //!
-//! Pinned to egui 0.35: the `Shadow` struct packs fields into 8-bit integers,
+//! The `Shadow` struct packs fields into 8-bit integers,
 //! and the context style API is `set_theme` + `global_style_mut` (not the
 //! `ctx.style()`/`set_style()` of 0.34). See inline comments at each site.
 

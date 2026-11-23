@@ -118,17 +118,17 @@ impl Default for BlackHoleUniforms {
     }
 }
 
-/// One planet's data, uploaded in a storage buffer (binding 3).
-#[derive(Clone, Copy, ShaderType, Default)]
+/// One planet's data at binding 3, with the same 32-byte stride as WGSL.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Default, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SphereData {
     pub center: Vec3,
     pub radius: f32,
     pub color: Vec3,
     pub emissive: u32,
-    pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
 }
+
+const _: () = assert!(std::mem::size_of::<SphereData>() == 32);
 
 pub const MAX_PLANETS: usize = 32;
 
@@ -138,7 +138,7 @@ pub struct BlackHoleMaterial {
     pub uniforms: BlackHoleUniforms,
     // Texture at binding 1 + its matching sampler at binding 2. The derive
     // requires the texture and sampler attributes to live on the same field.
-    // `dimension = "cube"` is REQUIRED: skybox.wgsl declares this binding as
+    // `dimension = "cube"` is REQUIRED: black_hole.wesl declares this binding as
     // `texture_cube<f32>`. The derive defaults to D2, which made the bind-group
     // layout (D2) disagree with the shader (Cube) — the pipeline failed to
     // specialize and the fullscreen quad silently drew nothing, leaving only
@@ -154,7 +154,7 @@ pub struct BlackHoleMaterial {
 
 impl Material2d for BlackHoleMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/black_hole.wgsl".into()
+        "shaders/black_hole.wesl".into()
     }
 }
 
@@ -183,7 +183,7 @@ pub struct BrightPassMaterial {
 
 impl Material2d for BrightPassMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/brightpass.wgsl".into()
+        "shaders/brightpass.wesl".into()
     }
 }
 
@@ -209,7 +209,7 @@ pub struct BlurMaterial {
 
 impl Material2d for BlurMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/blur.wgsl".into()
+        "shaders/blur.wesl".into()
     }
 }
 
@@ -238,6 +238,6 @@ pub struct CompositeMaterial {
 
 impl Material2d for CompositeMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/composite.wgsl".into()
+        "shaders/composite.wesl".into()
     }
 }
