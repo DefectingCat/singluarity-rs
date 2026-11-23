@@ -29,8 +29,6 @@
 make run          # cargo run --release (native)
 make web          # trunk serve at http://127.0.0.1:8080
 make test         # cargo test
-make docker-dev   # Docker Compose Watch web environment
-make docker-test  # tests inside the web-dev container
 trunk build --release
 ```
 
@@ -68,7 +66,8 @@ cargo build --locked --release
 - `Cargo.toml` / `Cargo.lock`: single-package manifest and committed resolution.
 - `.cargo/config.toml`: required wasm-only `web_sys_unstable_apis` cfg.
 - `Trunk.toml` / `web/index.html`: web entry, Binaryen compatibility, wasm-opt flags, and asset copying.
-- `Makefile`, `Dockerfile*`, `docker-compose.dev.yml`: supported local/container workflows.
+- `Makefile`: local development commands and production Web image build target.
+- `Dockerfile`: production Web image used by the release workflow.
 
 ## Runtime/Tooling Preferences
 
@@ -76,7 +75,7 @@ cargo build --locked --release
 - Use stable Rust with edition 2024. No exact toolchain is pinned. Keep `Cargo.lock` generated, committed, and unedited by hand.
 - Web development requires `wasm32-unknown-unknown`, Trunk, WebGPU, Binaryen/`wasm-opt`, and the target rustflags in `.cargo/config.toml`. `web/index.html` must retain both `data-wasm-opt-params` and the `copy-dir` for `assets/`; removing either can produce validation errors or shader 404s.
 - Native release builds embed assets; debug builds load WESL from disk for rapid shader iteration.
-- Linux native builds need `pkg-config`, `libasound2-dev`, and `libudev-dev`. Use `make docker-test` if host Bevy dependencies are unavailable.
+- Linux native builds need `pkg-config`, `libasound2-dev`, and `libudev-dev`.
 - No `scripts/`, `build.rs`, custom rustfmt/clippy configuration, or Node/Bun package manager is used.
 
 ## Testing & QA

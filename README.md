@@ -25,15 +25,6 @@ trunk serve
 
 Release web build: `trunk build --release`. On a browser without WebGPU, the page shows a fallback message instead of a blank canvas.
 
-**Docker Dev Mode** (WebGPU containerized development):
-
-```sh
-# Run with Docker Compose Watch for live hot-reloading
-docker compose -f docker-compose.dev.yml watch
-
-# Or open in VS Code / Cursor via Dev Containers: Reopen in Container
-```
-
 ## Controls
 
 - **Drag** (mouse) — orbit the camera around the hole.
