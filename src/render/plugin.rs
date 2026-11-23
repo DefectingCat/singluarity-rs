@@ -633,10 +633,12 @@ fn resize_offscreen(
     }
     if let Ok(target) = bloom2.single() {
         resize_target(&mut images, &target.0, eighth);
+#[allow(clippy::too_many_arguments)]
     }
     if let Ok(target) = bloom_final.single() {
         resize_target(&mut images, &target.0, half);
     }
+    mut disk_time: Local<f64>,
 
     for (transform, factor) in &mut quads {
         let size = scaled_size(size.as_vec2(), Vec2::new(factor.0, factor.1));
@@ -648,6 +650,8 @@ fn resize_offscreen(
         if let Some(source) = images.get(&material.source) {
             material.uniform.texel_size = source.size_f32().recip();
         }
+    // Integrate the rate so slowing or pausing the flow never resets its phase.
+    *disk_time += time.delta_secs_f64() * f64::from(params.disk_rotation_speed.max(0.0));
     }
     // Bevy emits image asset events after updating cameras. Mark projections
     // here so their cached target sizes match the resized textures this frame.
@@ -797,7 +801,7 @@ fn mirror_params(
         u.disk_outer = params.disk_outer;
         u.disk_tilt = params.disk_tilt;
         u.disk_brightness = params.disk_brightness;
-        u.disk_rotation_speed = params.disk_rotation_speed;
+        u.disk_time = *disk_time as f32;
         u.doppler_strength = params.doppler_strength;
         u.star_intensity = params.star_intensity;
         u.skybox_intensity = params.skybox_intensity;

@@ -212,11 +212,11 @@ pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams) {
     );
     slider(
         ui,
-        "Rotation",
+        "Flow speed",
         &mut params.disk_rotation_speed,
         0.0..=3.0,
         2,
-        "",
+        "×",
         false,
     );
     choose(
@@ -224,6 +224,7 @@ pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams) {
         "Color model",
         &mut params.disk_color_mode,
         &[
+            (DiskColorMode::Cinematic, "Cinematic"),
             (DiskColorMode::Gradient, "Gradient"),
             (DiskColorMode::Blackbody, "Blackbody"),
         ],
@@ -309,7 +310,7 @@ pub fn section_render(ui: &mut Ui, params: &mut BlackHoleParams) {
 }
 
 pub fn section_effects(ui: &mut Ui, params: &mut BlackHoleParams) {
-    egui::CollapsingHeader::new("Disk turbulence").show(ui, |ui| {
+    egui::CollapsingHeader::new("Accretion flow").show(ui, |ui| {
         section_turbulence(ui, params);
     });
     ui.separator();
@@ -320,7 +321,7 @@ pub fn section_effects(ui: &mut Ui, params: &mut BlackHoleParams) {
                 ui,
                 "Strength",
                 &mut params.doppler_strength,
-                0.0..=3.0,
+                0.0..=1.0,
                 2,
                 "",
                 false,
@@ -394,11 +395,14 @@ fn section_turbulence(ui: &mut Ui, params: &mut BlackHoleParams) {
             ui,
             "Thickness (H/R)",
             &mut params.disk_half_thickness,
-            0.02..=0.3,
-            2,
+            0.015..=0.30,
+            3,
             "",
             false,
         );
+    });
+    let has_filaments = matches!(params.disk_quality, DiskQuality::Medium | DiskQuality::High);
+    ui.add_enabled_ui(has_filaments, |ui| {
         slider(
             ui,
             "Filament frequency",
@@ -417,52 +421,52 @@ fn section_turbulence(ui: &mut Ui, params: &mut BlackHoleParams) {
             "",
             false,
         );
-        slider(
-            ui,
-            "Density frequency",
-            &mut params.density_freq,
-            0.2..=3.0,
-            2,
-            "",
-            false,
-        );
-        slider(
-            ui,
-            "Density strength",
-            &mut params.density_strength,
-            0.0..=2.0,
-            2,
-            "",
-            false,
-        );
-        slider(
-            ui,
-            "Arm count",
-            &mut params.arm_count,
-            0.0..=6.0,
-            2,
-            "",
-            false,
-        );
-        slider(
-            ui,
-            "Arm tightness",
-            &mut params.arm_tightness,
-            0.0..=6.0,
-            2,
-            "",
-            false,
-        );
-        slider(
-            ui,
-            "Arm strength",
-            &mut params.arm_strength,
-            0.0..=1.0,
-            2,
-            "",
-            false,
-        );
     });
+    slider(
+        ui,
+        "Band frequency",
+        &mut params.density_freq,
+        0.2..=3.0,
+        2,
+        "",
+        false,
+    );
+    slider(
+        ui,
+        "Absorption",
+        &mut params.density_strength,
+        0.0..=2.0,
+        2,
+        "",
+        false,
+    );
+    slider(
+        ui,
+        "Flow clusters",
+        &mut params.arm_count,
+        0.0..=6.0,
+        2,
+        "",
+        false,
+    );
+    slider(
+        ui,
+        "Curve tightness",
+        &mut params.arm_tightness,
+        0.0..=6.0,
+        2,
+        "",
+        false,
+    );
+    slider(
+        ui,
+        "Flow contrast",
+        &mut params.arm_strength,
+        0.0..=1.0,
+        2,
+        "",
+        false,
+    );
 }
 
 fn section_jets(ui: &mut Ui, params: &mut BlackHoleParams) {

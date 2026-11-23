@@ -27,7 +27,7 @@ pub struct BlackHoleUniforms {
     pub disk_outer: f32,
     pub disk_tilt: f32,
     pub disk_brightness: f32,
-    pub disk_rotation_speed: f32,
+    pub disk_time: f32,
     pub doppler_strength: f32,
     pub star_intensity: f32,
     pub skybox_intensity: f32,
@@ -54,7 +54,7 @@ pub struct BlackHoleUniforms {
     pub arm_strength: f32,
     pub disk_quality: u32,
     // Disk color mode + blackbody temp, relativistic jets.
-    pub disk_color_mode: u32, // 0=gradient, 1=blackbody
+    pub disk_color_mode: u32, // 0=gradient, 1=blackbody, 2=cinematic
     pub disk_temp: f32,       // blackbody base temperature (Kelvin)
     pub jets_enabled: u32,
     pub jets_strength: f32,
@@ -80,12 +80,12 @@ impl Default for BlackHoleUniforms {
             _pad3: 0.0,
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 25.0,
+            disk_outer: 14.8,
             disk_tilt: 0.45,
-            disk_brightness: 1.0,
-            disk_rotation_speed: 0.5,
-            doppler_strength: 1.0,
-            star_intensity: 1.0,
+            disk_brightness: 1.85,
+            disk_time: 0.0,
+            doppler_strength: 0.3,
+            star_intensity: 0.26,
             skybox_intensity: 0.0,
             grid_density: 1.0,
             doppler_enabled: 1,
@@ -98,18 +98,18 @@ impl Default for BlackHoleUniforms {
             bloom_strength: 0.8,
             exposure: 1.0,
             _pad5: 0.0,
-            disk_half_thickness: 0.15,
+            disk_half_thickness: 0.03,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 2.0,
-            density_strength: 1.2,
+            density_strength: 1.0,
             arm_count: 2.0,
             arm_tightness: 2.0,
-            arm_strength: 0.5,
+            arm_strength: 0.82,
             disk_quality: 3,    // High
-            disk_color_mode: 1, // Blackbody (Novikov-Thorne + Kerr Doppler)
-            disk_temp: 6500.0,
-            jets_enabled: 1,
+            disk_color_mode: 2, // Cinematic
+            disk_temp: 9700.0,
+            jets_enabled: 0,
             jets_strength: 1.0,
             aa_samples: 1, // overridden by params.aa_quality each frame
             _pad6: 0.0,

@@ -21,30 +21,17 @@ impl BloomQuality {
     }
 }
 
-/// Disk volumetric rendering quality. Gates noise octave counts.
-#[allow(dead_code)] // consumed starting Task 7 (tier dispatch) + Task 8 (egui)
+/// Volumetric disk shading quality. Every tier retains the main rotating gas bands.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskQuality {
-    Off,    // flat zero-thickness fallback (current appearance)
-    Low,    // 3/2/2 octaves — web default
-    Medium, // 4/3/3 octaves
+    Off,    // flat fallback
+    Low,    // gas bands without fine filaments
+    Medium, // gas bands + filaments
     #[default]
-    High, // 5/4/3 octaves — desktop default
+    High, // finer volume integration and filament detail
 }
 
 impl DiskQuality {
-    /// Returns (filament_octaves, density_octaves, warp_octaves).
-    /// Off returns zeros; the shader dispatches to the flat path instead.
-    #[allow(dead_code)] // read in Task 7's tier dispatch
-    pub fn octaves(self) -> (u32, u32, u32) {
-        match self {
-            DiskQuality::Off => (0, 0, 0),
-            DiskQuality::Low => (3, 2, 2),
-            DiskQuality::Medium => (4, 3, 3),
-            DiskQuality::High => (5, 4, 3),
-        }
-    }
-
     /// Tier as a u32 for the WGSL uniform selector.
     pub fn as_u32(self) -> u32 {
         match self {
@@ -56,15 +43,13 @@ impl DiskQuality {
     }
 }
 
-/// Accretion disk color model. Gradient = the hand-tuned white-hot → orange
-/// ramp with Newtonian Doppler; Blackbody = Tanner-Helland color keyed to a
-/// Novikov-Thorne temperature profile shifted by the Kerr 4-velocity Doppler
-/// factor, so the approaching side turns hotter/bluer.
+/// Accretion disk color models for display and temperature exploration.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum DiskColorMode {
-    #[default]
-    Gradient, // mode 0: existing appearance
+    Gradient,  // mode 0: white-hot to orange radial ramp
     Blackbody, // mode 1: analytic blackbody + Kerr δ
+    #[default]
+    Cinematic, // mode 2: warm highlights with restrained beaming
 }
 
 impl DiskColorMode {
@@ -72,15 +57,13 @@ impl DiskColorMode {
         match self {
             DiskColorMode::Gradient => 0,
             DiskColorMode::Blackbody => 1,
+            DiskColorMode::Cinematic => 2,
         }
     }
 }
 
-/// Per-pixel supersampling for the higher-order lensed-image rings. The rings
-/// are physical (lensed disk images), but the integrator renders each wrap as a
-/// sharp discrete band; firing several jittered sub-rays per pixel and
-/// averaging antialiases those edges into a smooth gradient. Off = 1 ray/pixel
-/// (cheapest, rings visible); Low = 2; High = 4 (smoothest, ~4× the march cost).
+/// Supersampling around the higher-order lensed disk rings. Other pixels
+/// trace one ray, while Low and High use two and four near the rings.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum AaQuality {
     Off,
@@ -112,7 +95,7 @@ pub struct BlackHoleParams {
     pub disk_outer: f32,
     pub disk_tilt: f32, // radians, tilt of disk plane vs. camera
     pub disk_brightness: f32,
-    pub disk_rotation_speed: f32,
+    pub disk_rotation_speed: f32, // animation time multiplier, 0 pauses the flow
     pub doppler_enabled: bool,
     pub doppler_strength: f32,
     // Renderer
@@ -164,12 +147,12 @@ impl Default for BlackHoleParams {
         Self {
             rs: 1.0,
             disk_inner: 3.0,
-            disk_outer: 25.0, // Gargantua-like extent (was 15.0)
-            disk_tilt: 0.45,  // ~25.8 deg
-            disk_brightness: 1.0,
-            disk_rotation_speed: 1.2,
+            disk_outer: 14.8,
+            disk_tilt: 0.45, // ~25.8 deg
+            disk_brightness: 1.85,
+            disk_rotation_speed: 1.0,
             doppler_enabled: true,
-            doppler_strength: 1.0,
+            doppler_strength: 0.3,
             steps: if cfg!(target_arch = "wasm32") {
                 200
             } else {
@@ -180,7 +163,7 @@ impl Default for BlackHoleParams {
             } else {
                 0.75
             },
-            star_intensity: 1.0,
+            star_intensity: 0.26,
             grid_enabled: false,
             grid_density: 1.0,
             skybox_intensity: 0.0, // procedural stars only by default
@@ -195,47 +178,30 @@ impl Default for BlackHoleParams {
             } else {
                 BloomQuality::High
             },
-            // H/R ratio (was an absolute world-space half-height). 0.15 = standard
-            // thin-disk scale height; the slab now scales with radius, so a ray
-            // through large r traverses a proportionally thicker disk.
-            disk_half_thickness: 0.15,
+            disk_half_thickness: 0.03,
             filament_freq: 1.0,
             filament_sharpness: 2.0,
             density_freq: 2.0,
-            // Raised from 1.0: the new density model has no 0.55 floor and decays
-            // to 0 at the edges, so a slightly higher multiplier keeps the bulk
-            // opaque after per-step integration.
-            density_strength: 1.2,
+            density_strength: 1.0,
             arm_count: 2.0,
             arm_tightness: 2.0,
-            arm_strength: 0.5,
+            arm_strength: 0.82,
             disk_quality: if cfg!(target_arch = "wasm32") {
                 DiskQuality::Low
             } else {
                 DiskQuality::High
             },
-            // Blackbody: the Novikov-Thorne radial temperature gradient × Kerr
-            // Doppler gives the smooth white-hot inner → deep-orange outer look
-            // (closer to Gargantua than the hand-tuned Gradient mode).
-            disk_color_mode: DiskColorMode::Blackbody,
-            // 6500 K (was 10000): tuned so the NT profile yields a warm-white
-            // inner disk fading to deep orange at the outer edge.
-            disk_temp: 6500.0,
-            jets_enabled: true,
+            disk_color_mode: DiskColorMode::Cinematic,
+            disk_temp: 9700.0,
+            jets_enabled: false,
             jets_strength: 1.0,
-            // Supersampling off on web (WebGPU budget) and Low (2×) on desktop.
-            // The RK45 march is already ~10× Phase 1's cost, so desktop stays
-            // at 2× by default — enough to soften the rings — with High (4×)
-            // available in the UI for a fully smooth Gargantua look.
+            // Web uses one ray everywhere. Desktop supersamples the rings.
             aa_quality: if cfg!(target_arch = "wasm32") {
                 AaQuality::Off
             } else {
                 AaQuality::Low
             },
-            // Planets: 6 颗. 半径基准是 disk_outer (默认 25), factor 1.3 →
-            // r ≈ 32.5, 稳定在盘外 (盘范围 [isco, 25]). 早期用 ISCO 作基准会让
-            // 行星落进盘的径向范围. 种子 42, time_scale 50× (进动慢, 需放大).
-            planets_enabled: true,
+            planets_enabled: false,
             planet_count_target: 6,
             planet_radius_factor: 1.3,
             planet_seed: 42,
