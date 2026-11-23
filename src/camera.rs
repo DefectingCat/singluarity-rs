@@ -5,12 +5,12 @@ use bevy::prelude::*;
 
 /// Orbit camera state. The black hole is at the origin (Rs=1 units).
 /// `distance` is the camera radius; `yaw`/`pitch` orient it.
-#[derive(Resource, Clone, Copy)]
+#[derive(Resource, Clone, Copy, PartialEq)]
 pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
-    /// Vertical field of view in radians.
+    /// Field of view along the shorter viewport axis, in radians.
     pub fov: f32,
     /// Whether the camera should orbit while it is idle.
     pub auto_rotate: bool,
@@ -19,34 +19,52 @@ pub struct OrbitCamera {
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
-            yaw: -1.065,
-            // ~0.335 rad (19°) below the disk plane. The lensed far side of the
-            // disk then arcs over the top of the shadow — the iconic framing. The
-            // basis() has no gimbal pole, so any pitch is safe; this is just a nice
-            // default angle, not a pole-avoidance choice.
-            pitch: -0.335,
-            distance: 30.0,
-            fov: 1.0, // radians
-            auto_rotate: true,
+            // About 1.2° below the default tilted disk, revealing both lensed arcs.
+            yaw: -0.33,
+            pitch: -0.45,
+            distance: 28.5,
+            fov: 0.49,
+            auto_rotate: false,
         }
     }
 }
 
 const AUTO_ORBIT_PERIOD: f32 = 45.0;
 const AUTO_ORBIT_IDLE_DELAY: f32 = 1.5;
+const FLYBY_START_DISTANCE: f32 = 44.0;
+const FLYBY_DURATION: f32 = 10.0;
 
-/// Tracks time since the last camera or UI interaction.
+/// Tracks input and an optional camera flyby.
 #[derive(Resource)]
 pub struct OrbitInteraction {
     idle_seconds: f32,
+    flyby_elapsed: Option<f32>,
 }
 
 impl Default for OrbitInteraction {
     fn default() -> Self {
-        // Treat startup as already idle so auto-orbit begins on the first frame.
         Self {
             idle_seconds: AUTO_ORBIT_IDLE_DELAY,
+            flyby_elapsed: None,
         }
+    }
+}
+
+impl OrbitInteraction {
+    pub(crate) fn flyby_active(&self) -> bool {
+        self.flyby_elapsed.is_some()
+    }
+
+    pub(crate) fn start_flyby(&mut self, camera: &mut OrbitCamera) {
+        *camera = OrbitCamera {
+            distance: FLYBY_START_DISTANCE,
+            ..default()
+        };
+        self.flyby_elapsed = Some(0.0);
+    }
+
+    pub(crate) fn stop_flyby(&mut self) {
+        self.flyby_elapsed = None;
     }
 }
 
@@ -58,6 +76,15 @@ pub struct UiPointerActivity(pub bool);
 #[derive(Resource, Default)]
 pub struct WantsPointer(pub bool);
 impl OrbitCamera {
+    /// The ray generator expects a vertical angle even in portrait windows.
+    pub(crate) fn vertical_fov(&self, aspect: f32) -> f32 {
+        if aspect >= 1.0 {
+            self.fov
+        } else {
+            2.0 * ((self.fov * 0.5).tan() / aspect).atan()
+        }
+    }
+
     /// Compute the camera eye position and an orthonormal basis (forward/right/up)
     /// in Bevy's right-handed Y-up coordinate system. The black hole sits at origin.
     /// Disk plane is the xz-plane (y=0); the disk tilt is applied in the shader
@@ -111,6 +138,7 @@ pub fn orbit_controller(
         active_interaction = true;
         if !wants.0 {
             for ev in motion.read() {
+                interaction.stop_flyby();
                 // View-follows-cursor: dragging right rotates the view right,
                 // dragging down tilts it down (inverts the old grab-the-scene mapping).
                 camera.yaw += ev.delta.x * 0.005;
@@ -132,6 +160,7 @@ pub fn orbit_controller(
         if wants.0 {
             continue;
         }
+        interaction.stop_flyby();
         // Trackpads/Magic Mouse deliver PIXEL deltas (tens of px per event);
         // wheel mice deliver LINE deltas (±1 per notch). Normalize pixels to
         // notch-equivalents — treating raw pixels as lines made a single
@@ -155,6 +184,16 @@ pub fn orbit_controller(
 
     interaction.idle_seconds =
         (interaction.idle_seconds + time.delta_secs()).min(AUTO_ORBIT_IDLE_DELAY);
+    if let Some(elapsed) = interaction.flyby_elapsed.as_mut() {
+        *elapsed += time.delta_secs();
+        let t = (*elapsed / FLYBY_DURATION).min(1.0);
+        let eased = t * t * (3.0 - 2.0 * t);
+        camera.distance = FLYBY_START_DISTANCE.lerp(OrbitCamera::default().distance, eased);
+        if t == 1.0 {
+            interaction.stop_flyby();
+        }
+        return;
+    }
     if camera.auto_rotate && interaction.idle_seconds >= AUTO_ORBIT_IDLE_DELAY {
         // Positive yaw is the same direction as dragging the view to the right.
         camera.yaw = (camera.yaw
@@ -215,6 +254,7 @@ mod tests {
     #[test]
     fn auto_orbit_starts_immediately_at_fixed_rate() {
         let mut world = wheel_world(30.0);
+        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         let start = world.resource::<OrbitCamera>().yaw;
 
         advance(&mut world, 0.5);
@@ -230,6 +270,7 @@ mod tests {
     #[test]
     fn wheel_interaction_pauses_then_resumes_after_idle_delay() {
         let mut world = wheel_world(30.0);
+        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         advance(&mut world, 0.5);
         let paused_at = world.resource::<OrbitCamera>().yaw;
 
@@ -244,6 +285,7 @@ mod tests {
     #[test]
     fn active_ui_interaction_pauses_auto_orbit() {
         let mut world = wheel_world(30.0);
+        world.resource_mut::<OrbitCamera>().auto_rotate = true;
         world.resource_mut::<UiPointerActivity>().0 = true;
         let start = world.resource::<OrbitCamera>().yaw;
 
@@ -253,15 +295,63 @@ mod tests {
     }
 
     #[test]
-    fn disabling_auto_orbit_keeps_manual_camera_behavior_only() {
-        let mut world = wheel_world(30.0);
-        world.resource_mut::<OrbitCamera>().auto_rotate = false;
-        let start = world.resource::<OrbitCamera>().yaw;
+    fn default_camera_holds_its_framing() {
+        let default_camera = OrbitCamera::default();
+        let mut world = wheel_world(default_camera.distance);
 
         advance(&mut world, 1.0);
 
-        assert_eq!(world.resource::<OrbitCamera>().yaw, start);
+        assert!(*world.resource::<OrbitCamera>() == default_camera);
     }
+
+    fn start_flyby(world: &mut World) {
+        world.resource_scope(|world, mut interaction: Mut<OrbitInteraction>| {
+            interaction.start_flyby(&mut world.resource_mut::<OrbitCamera>());
+        });
+    }
+
+    #[test]
+    fn flyby_eases_to_the_default_camera_and_stops() {
+        let mut world = wheel_world(5.0);
+        start_flyby(&mut world);
+        let near = OrbitCamera::default().distance;
+        assert_eq!(
+            world.resource::<OrbitCamera>().distance,
+            FLYBY_START_DISTANCE
+        );
+
+        advance(&mut world, FLYBY_DURATION / 2.0);
+        assert_eq!(
+            world.resource::<OrbitCamera>().distance,
+            (FLYBY_START_DISTANCE + near) / 2.0
+        );
+        advance(&mut world, FLYBY_DURATION / 2.0);
+        advance(&mut world, FLYBY_DURATION);
+
+        assert!(!world.resource::<OrbitInteraction>().flyby_active());
+        assert!(*world.resource::<OrbitCamera>() == OrbitCamera::default());
+    }
+
+    #[test]
+    fn zoom_cancels_the_flyby_at_the_manual_distance() {
+        let mut world = wheel_world(5.0);
+        start_flyby(&mut world);
+        advance(&mut world, 1.0);
+        let zoomed = scroll(&mut world, MouseScrollUnit::Line, &[1.0]);
+        advance(&mut world, FLYBY_DURATION);
+        assert!(!world.resource::<OrbitInteraction>().flyby_active());
+        assert_eq!(world.resource::<OrbitCamera>().distance, zoomed);
+    }
+
+    #[test]
+    fn portrait_framing_preserves_the_short_axis_angle() {
+        let camera = OrbitCamera::default();
+        let aspect = 9.0 / 16.0;
+        let half_horizontal_tangent = (camera.vertical_fov(aspect) * 0.5).tan() * aspect;
+        assert!((half_horizontal_tangent - (camera.fov * 0.5).tan()).abs() < 1e-6);
+        assert_eq!(camera.vertical_fov(16.0 / 9.0), camera.fov);
+    }
+
     #[test]
     fn left_drag_applies_manual_rotation_without_auto_rotation() {
         let mut world = wheel_world(30.0);

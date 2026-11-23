@@ -4,7 +4,7 @@ use std::{f32::consts::PI, ops::RangeInclusive};
 
 use bevy_egui::egui::{self, Align, Layout, RichText, TextStyle, Ui};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, OrbitInteraction};
 use crate::params::{AaQuality, BlackHoleParams, BloomQuality, DiskColorMode, DiskQuality};
 use crate::ui::style::{ACCENT, BORDER, MUTED_TEXT, SURFACE, TEXT};
 
@@ -118,7 +118,8 @@ fn heading(ui: &mut Ui, title: &str) {
     ui.label(RichText::new(title).small().strong().color(MUTED_TEXT));
 }
 
-pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera) {
+pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera, orbit: &mut OrbitInteraction) {
+    let before = *cam;
     switch(ui, "Auto orbit", &mut cam.auto_rotate);
     ui.separator();
     slider(
@@ -149,6 +150,23 @@ pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera) {
         " rad",
         false,
     );
+    if before != *cam {
+        orbit.stop_flyby();
+    }
+    ui.separator();
+    let active = orbit.flyby_active();
+    let label = if active { "Stop flyby" } else { "Play flyby" };
+    if ui
+        .add_sized([ui.available_width(), 28.0], egui::Button::new(label))
+        .on_hover_text("Push in from a wide view over ten seconds")
+        .clicked()
+    {
+        if active {
+            orbit.stop_flyby();
+        } else {
+            orbit.start_flyby(cam);
+        }
+    }
 }
 
 pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams) {
@@ -544,7 +562,10 @@ mod tests {
         let original = cam;
 
         let ctx = egui::Context::default();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| section_camera(ui, &mut cam));
+        let mut orbit = OrbitInteraction::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            section_camera(ui, &mut cam, &mut orbit)
+        });
         output.textures_delta.clear();
 
         assert_eq!(cam.yaw, original.yaw, "idle Yaw slider wrote back");

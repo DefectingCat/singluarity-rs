@@ -780,7 +780,7 @@ fn mirror_params(
         Ok(w) => w,
         Err(_) => return,
     };
-    // Only update when something changed.
+    let resolution = win.size().max(Vec2::ONE);
     let (eye, forward, right, up) = camera.basis();
     for (_, mat) in materials.iter_mut() {
         let u = &mut mat.uniforms;
@@ -788,8 +788,8 @@ fn mirror_params(
         u.forward = forward;
         u.right = right;
         u.up = up;
-        u.fov = camera.fov;
-        u.resolution = Vec2::new(win.width(), win.height());
+        u.fov = camera.vertical_fov(resolution.x / resolution.y);
+        u.resolution = resolution;
         u.time = time.elapsed_secs();
         u.rs = params.rs;
         // disk_inner is spin-derived (Kerr ISCO); the params.disk_inner field is ignored.

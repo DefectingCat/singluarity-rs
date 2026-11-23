@@ -2,7 +2,7 @@
 
 ## Camera auto-orbit decision
 
-The camera auto-rotates by increasing yaw only when enabled by default. It matches a rightward mouse drag, completes one revolution in about 45 seconds, and starts immediately. Left-button dragging, wheel zoom, and active UI control manipulation pause the rotation; it resumes after 1.5 seconds of no interaction. Mere pointer hover does not pause it. The Camera panel exposes an on/off toggle; speed is fixed and not user-adjustable.
+The camera opens on a stationary close view just below the disk. The Camera panel can start a ten-second flyby from distance 44 to the default 28.5, or enable a continuous 45-second orbit. Dragging or zooming the scene interrupts the flyby. Manual input and active UI controls pause continuous orbit, which resumes after 1.5 seconds of inactivity. The field of view follows the shorter viewport axis so portrait windows keep the main lensed arcs in frame.
 
 ## egui slider writeback gotcha (camera sliders must use `SliderClamping::Edits`)
 

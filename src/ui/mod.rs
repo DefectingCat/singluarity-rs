@@ -6,7 +6,7 @@ mod style;
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Align2, Button, Layout, RichText, Ui};
 
-use crate::camera::{OrbitCamera, UiPointerActivity, WantsPointer};
+use crate::camera::{OrbitCamera, OrbitInteraction, UiPointerActivity, WantsPointer};
 use crate::params::BlackHoleParams;
 use crate::scene::planets::PlanetSystemDirty;
 use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
@@ -38,11 +38,20 @@ impl ControlTab {
     ];
 }
 
-#[derive(Default)]
 pub struct Controls {
     tab: ControlTab,
     collapsed: bool,
     preset: Preset,
+}
+
+impl Default for Controls {
+    fn default() -> Self {
+        Self {
+            tab: ControlTab::Camera,
+            collapsed: true,
+            preset: Preset::Custom,
+        }
+    }
 }
 
 const PRESETS: [(Preset, &str); 4] = [
@@ -52,10 +61,12 @@ const PRESETS: [(Preset, &str); 4] = [
     (Preset::Web, "Web"),
 ];
 
+#[allow(clippy::too_many_arguments)]
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
     mut params: ResMut<BlackHoleParams>,
     mut camera: ResMut<OrbitCamera>,
+    mut orbit: ResMut<OrbitInteraction>,
     mut wants: ResMut<WantsPointer>,
     mut ui_activity: ResMut<UiPointerActivity>,
     mut planet_dirty: ResMut<PlanetSystemDirty>,
@@ -68,7 +79,7 @@ pub fn ui_system(
     };
 
     let planets_before = planet_configuration(&params);
-    let rect = controls.show(ctx, &mut params, &mut camera);
+    let rect = controls.show(ctx, &mut params, &mut camera, &mut orbit);
     if planets_before != planet_configuration(&params) {
         planet_dirty.0 = true;
     }
@@ -103,6 +114,7 @@ impl Controls {
         ctx: &egui::Context,
         params: &mut BlackHoleParams,
         camera: &mut OrbitCamera,
+        orbit: &mut OrbitInteraction,
     ) -> egui::Rect {
         if !ctx.text_edit_focused() {
             let tab_available = !ctx.egui_wants_keyboard_input();
@@ -162,7 +174,7 @@ impl Controls {
             .fade_in(false)
             .show(ctx, |ui| {
                 ui.set_width(width);
-                self.inspector(ui, height, params, camera);
+                self.inspector(ui, height, params, camera, orbit);
             })
             .response
             .rect;
@@ -181,6 +193,7 @@ impl Controls {
         max_height: f32,
         params: &mut BlackHoleParams,
         camera: &mut OrbitCamera,
+        orbit: &mut OrbitInteraction,
     ) {
         panel_frame(16).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -229,7 +242,7 @@ impl Controls {
 
                             ui.spacing_mut().item_spacing.y = 5.0;
                             match tab {
-                                ControlTab::Camera => section_camera(ui, camera),
+                                ControlTab::Camera => section_camera(ui, camera, orbit),
                                 ControlTab::Scene => section_scene(ui, params),
                                 ControlTab::Render => section_render(ui, params),
                                 ControlTab::Effects => section_effects(ui, params),
@@ -346,8 +359,12 @@ mod tests {
     fn collapsed_controls_only_capture_the_launcher() {
         let ctx = egui::Context::default();
         style::setup(&ctx);
-        let mut controls = Controls::default();
+        let mut controls = Controls {
+            collapsed: false,
+            ..Default::default()
+        };
         let mut camera = OrbitCamera::default();
+        let mut orbit = OrbitInteraction::default();
         let mut params = BlackHoleParams::default();
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 650.0));
         let mut frame = |events| {
@@ -358,7 +375,7 @@ mod tests {
             };
             let mut result = None;
             let mut output = ctx.run_ui(input, |_| {
-                let rect = controls.show(&ctx, &mut params, &mut camera);
+                let rect = controls.show(&ctx, &mut params, &mut camera, &mut orbit);
                 result = Some((rect, pointer_over_controls(&ctx, rect)));
             });
             output.textures_delta.clear();
