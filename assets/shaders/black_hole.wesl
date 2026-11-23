@@ -300,7 +300,7 @@ fn skybox_color(dir: vec3<f32>) -> vec3<f32> {
     return textureSampleLevel(skybox, skybox_sampler, dir, 0.0).rgb;
 }
 
-// --- geodesic ---
+// --- approximate ray bending ---
 struct Deriv {
     dpos: vec3<f32>,
     ddir: vec3<f32>,
@@ -830,9 +830,9 @@ fn grid_hit(prev: vec3<f32>, cur: vec3<f32>) -> vec3<f32> {
     return col * 0.5;
 }
 
-// One Dormand-Prince RK45 step. Returns the 5th-order solution and the
-// error estimate (y5 - y4) as a vec3 (position error; direction error is
-// folded in via normalize so we only need position error for step control).
+// One Cash–Karp RK45 step with direction normalization at each stage.
+// Advance with the fifth-order weights and estimate the error from the
+// distance between the fifth- and fourth-order position estimates.
 struct RkStep {
     pos: vec3<f32>,
     dir: vec3<f32>,
@@ -840,7 +840,7 @@ struct RkStep {
 };
 
 fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
-    // Butcher tableau (Dormand-Prince), 6 stages. Each deriv() returns Deriv{dpos, ddir}.
+    // Six-stage Cash–Karp tableau. Each deriv() returns Deriv{dpos, ddir}.
     let k1 = deriv(pos, dir);
     let p2 = pos + k1.dpos * dt * 0.2;
     let d2 = normalize(dir + k1.ddir * dt * 0.2);
@@ -857,9 +857,9 @@ fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
     let p6 = pos + (k1.dpos * 1631.0/55296.0 + k2.dpos * 175.0/512.0 + k3.dpos * 575.0/13824.0 + k4.dpos * 44275.0/110592.0 + k5.dpos * 253.0/4096.0) * dt;
     let d6 = normalize(dir + (k1.ddir * 1631.0/55296.0 + k2.ddir * 175.0/512.0 + k3.ddir * 575.0/13824.0 + k4.ddir * 44275.0/110592.0 + k5.ddir * 253.0/4096.0) * dt);
     let k6 = deriv(p6, d6);
-    // 5th-order solution (used to advance).
-    let new_pos = pos + (k1.dpos * 37.0/378.0 + k3.dpos * 250.0/621.0 + k4.dpos * 125.0/594.0 + k5.dpos * 512.0/1771.0 + k6.dpos * 0.0) * dt;
-    let new_dir = normalize(dir + (k1.ddir * 37.0/378.0 + k3.ddir * 250.0/621.0 + k4.ddir * 125.0/594.0 + k5.ddir * 512.0/1771.0 + k6.ddir * 0.0) * dt);
+    // Fifth-order weights (k2 and k5 have zero weight).
+    let new_pos = pos + (k1.dpos * 37.0/378.0 + k3.dpos * 250.0/621.0 + k4.dpos * 125.0/594.0 + k6.dpos * 512.0/1771.0) * dt;
+    let new_dir = normalize(dir + (k1.ddir * 37.0/378.0 + k3.ddir * 250.0/621.0 + k4.ddir * 125.0/594.0 + k6.ddir * 512.0/1771.0) * dt);
     // 4th-order solution (for error estimate).
     let pos4 = pos + (k1.dpos * 2825.0/27648.0 + k3.dpos * 18575.0/48384.0 + k4.dpos * 13525.0/55296.0 + k5.dpos * 277.0/14336.0 + k6.dpos * 0.25) * dt;
     let err = length(new_pos - pos4);
