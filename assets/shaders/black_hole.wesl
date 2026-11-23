@@ -2,6 +2,7 @@
 import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 const MAX_DISK_CLUMPS: u32 = 6u;
+const FLAT_DISK_PATH: f32 = 0.85;
 
 struct DiskClump {
     radius_fraction: f32,
@@ -442,10 +443,9 @@ fn disk_color(r: f32, pos: vec3f, dir: vec3f, r_ratio: f32) -> vec3f {
         return temperature_color(radial_t) * mix(1.0, shift.y, strength);
     }
 
-    // Keep the inner disk gold as beaming brightens the approaching side.
-    let warm = mix(vec3f(1.0, 0.72, 0.38), vec3f(1.0, 0.30, 0.065),
-                   smoothstep(0.0, 0.60, radial_t));
-    return warm * mix(1.0, clamp(shift.y, 0.42, 1.45), strength);
+    let warm = mix(vec3f(1.0, 0.78, 0.50), vec3f(1.0, 0.54, 0.24),
+                   smoothstep(0.08, 0.82, radial_t));
+    return warm * mix(1.0, clamp(shift.y, 0.20, 2.15), strength);
 }
 
 fn disk_flow(r: f32, plane_dir: vec2f, radial_t: f32) -> f32 {
@@ -484,6 +484,16 @@ fn disk_flow(r: f32, plane_dir: vec2f, radial_t: f32) -> f32 {
     return min(emission, 3.0);
 }
 
+fn disk_bands(t: f32, plane_dir: vec2f) -> f32 {
+    // Vary the width and azimuth of the radial bands so the dark lanes bend
+    // around the disk. The moving clumps add time-dependent detail on top.
+    let warp = dot(plane_dir, vec2f(0.63, -0.58)) + 0.70 * plane_dir.x * plane_dir.y;
+    let phase = 62.0 * t - 1.15 + warp + 1.35 * sin(26.0 * t - warp);
+    let broad = smoothstep(-0.58, 0.83, sin(phase));
+    let fine = smoothstep(-0.92, -0.25, sin(3.65 * phase + 0.85 * sin(0.8 * phase)));
+    return mix(0.16, 1.0, broad) * mix(0.38, 1.0, fine);
+}
+
 fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSample {
     let inner = uniforms.disk_inner;
     let t = (r - inner) / (uniforms.disk_outer - inner);
@@ -492,22 +502,37 @@ fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSam
     let radial = r_ratio * r_ratio;
     let height_squared = height_samples * height_samples;
     let absorption_profile = dot(exp(-5.0 * height_squared), vec2f(0.5));
-    let strands = 1.0 + disk_flow(r, pos.xz / r, t) * uniforms.arm_strength;
-    // Emission is concentrated near the midplane and fades before the
-    // absorbing layer ends, leaving contrast around the lower lensed arc.
-    let emission_profile = dot(exp(-13.0 * height_squared), vec2f(0.65));
-    let outer_emission = 1.0 - 0.88 * smoothstep(0.18, 0.72, t);
+    let plane_dir = pos.xz / r;
+    let clumps = disk_flow(r, plane_dir, t) * uniforms.arm_strength;
+    let core_profile = dot(exp(-13.0 * height_squared), vec2f(0.5));
     let color = disk_color(r, pos, dir, r_ratio);
-    var emission = color * emission_profile * radial * outer_emission * strands;
+    let atmosphere = edge * absorption_profile * mix(0.035, 0.52, radial);
     if (uniforms.disk_color_mode == 2u) {
-        // Warm, diffuse outer gas beneath the brighter orbiting strands.
-        // Its falloff is gentler than the core so it fills the foreground
-        // without adding optical depth over the far side of the disk.
-        let diffuse_radial = 0.15 * r_ratio * smoothstep(0.04, 0.31, t);
-        emission += vec3f(1.0, 0.31, 0.07) * absorption_profile * diffuse_radial;
+        let bands = disk_bands(t, plane_dir);
+        let slope = abs(dir.y);
+        let band_contrast = smoothstep(0.15, 0.75, slope);
+        let surface_bands = mix(0.54 + 0.46 * bands, bands, band_contrast);
+        // Integral of exp(-13 * (y/H)^2) over -H..H is about 0.492 H.
+        // Express optical depth for a vertical crossing, including the flat tier.
+        let vertical_path = select(FLAT_DISK_PATH, 0.492 * r * uniforms.disk_half_thickness,
+                                   uniforms.disk_quality > 0u);
+        let root_ratio = sqrt(r_ratio);
+        // Keep the outer foreground optically thin so the lower arc can shine through.
+        let depth = 4.4 * root_ratio * mix(1.0, 0.035, smoothstep(0.16, 0.45, t));
+        let core = edge * core_profile * depth * mix(0.46, 1.0, surface_bands)
+                 / max(vertical_path, 1e-3);
+
+        // Fade the rim at the ISCO with a zero-torque radial flux profile.
+        let thermal_flux = radial * r_ratio * (1.0 - root_ratio);
+        let surface = 4.2 * sqrt(thermal_flux) * surface_bands * (1.0 + 0.38 * clumps);
+        let haze = edge * absorption_profile * r_ratio * (0.010 + 0.038 * surface_bands);
+        let emission = color * (core * surface + haze) * uniforms.disk_brightness;
+        return DiskSample(emission, (core + atmosphere) * uniforms.density_strength);
     }
-    let extinction = edge * absorption_profile * mix(0.035, 0.52, radial) * uniforms.density_strength;
-    return DiskSample(emission * edge * uniforms.disk_brightness, extinction);
+
+    let outer_emission = 1.0 - 0.88 * smoothstep(0.18, 0.72, t);
+    let emission = color * (1.3 * core_profile) * radial * outer_emission * (1.0 + clumps);
+    return DiskSample(emission * edge * uniforms.disk_brightness, atmosphere * uniforms.density_strength);
 }
 
 // Integrate constant emission and extinction over this sample's path length
@@ -549,18 +574,20 @@ fn integrate_disk_segment(prev: vec3f, new_pos: vec3f, dir: vec3f,
     let samples = min(2u + uniforms.disk_quality, MAX_SAMPLES);
     let dt = (t1 - t0) / f32(samples);
     let path = dt * length(new_pos - prev);
+    // Keep samples near their quadrature centers in the denser Cinematic disk.
+    let jitter_width = select(0.74, 0.16, uniforms.disk_color_mode == 2u);
     for (var i = 0u; i < MAX_SAMPLES; i += 1u) {
         if (i >= samples || *accum_alpha > 0.99) { break; }
         // Stable stratified offsets suppress coherent spokes without a
         // separate hash at every volume sample.
         let jitter = fract(disk_jitter + f32(i) * 0.618034);
-        let t = t0 + dt * (f32(i) + mix(0.13, 0.87, jitter));
+        let center = t0 + dt * (f32(i) + 0.5);
+        let t = center + dt * jitter_width * (jitter - 0.5);
         let p = mix(prev, new_pos, t);
         let r = r_of(p);
         if (r <= uniforms.disk_inner || r >= uniforms.disk_outer) { continue; }
         // Integrate the steep vertical profiles at two Gauss–Legendre
         // points. The jittered position still samples the in-plane texture.
-        let center = t0 + dt * (f32(i) + 0.5);
         let nodes = vec2f(center) + dt * vec2f(-0.28867513, 0.28867513);
         let heights = (vec2f(prev.y) + dy * nodes) / max(r * height_ratio, 1e-3);
         composite_disk(disk_sample(r, p, dir, heights), path, accum_color, accum_alpha);
@@ -833,7 +860,7 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
                 let ty = prev.y / (prev.y - new_pos.y);
                 let hit = mix(prev, new_pos, ty);
                 composite_disk(disk_sample(r_of(hit), hit, new_dir, vec2f(0.0)),
-                               0.85, &accum_color, &accum_alpha);
+                               FLAT_DISK_PATH, &accum_color, &accum_alpha);
             }
         } else {
             integrate_disk_segment(prev, new_pos, new_dir, &accum_color, &accum_alpha);
