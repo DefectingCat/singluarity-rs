@@ -2,6 +2,7 @@ use bevy::input::mouse::MouseMotion;
 use bevy::input::mouse::MouseScrollUnit;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use std::f32::consts::{PI, TAU};
 
 /// Orbit camera state. The black hole is at the origin (Rs=1 units).
 /// `distance` is the camera radius; `yaw`/`pitch` orient it.
@@ -31,6 +32,12 @@ impl Default for OrbitCamera {
 
 const AUTO_ORBIT_PERIOD: f32 = 45.0;
 const AUTO_ORBIT_IDLE_DELAY: f32 = 1.5;
+const MAX_PITCH: f32 = PI - 0.05;
+const DRAG_RADIANS_PER_PIXEL: f32 = 0.005;
+const DRAG_VELOCITY_RESPONSE: f32 = 30.0;
+const MAX_DRAG_SPEED: f32 = 4.0;
+const COAST_DAMPING: f32 = 8.0;
+const COAST_STOP_SPEED: f32 = 0.02;
 const FLYBY_START_DISTANCE: f32 = 44.0;
 const FLYBY_DURATION: f32 = 10.0;
 
@@ -39,6 +46,7 @@ const FLYBY_DURATION: f32 = 10.0;
 pub struct OrbitInteraction {
     idle_seconds: f32,
     flyby_elapsed: Option<f32>,
+    angular_velocity: Vec2,
 }
 
 impl Default for OrbitInteraction {
@@ -46,6 +54,7 @@ impl Default for OrbitInteraction {
         Self {
             idle_seconds: AUTO_ORBIT_IDLE_DELAY,
             flyby_elapsed: None,
+            angular_velocity: Vec2::ZERO,
         }
     }
 }
@@ -62,10 +71,28 @@ impl OrbitInteraction {
             ..default()
         };
         self.flyby_elapsed = Some(0.0);
+        self.angular_velocity = Vec2::ZERO;
     }
 
     pub(crate) fn stop_flyby(&mut self) {
         self.flyby_elapsed = None;
+    }
+
+    fn coast(&mut self, camera: &mut OrbitCamera, seconds: f32) -> bool {
+        if self.angular_velocity.length_squared() <= COAST_STOP_SPEED * COAST_STOP_SPEED {
+            self.angular_velocity = Vec2::ZERO;
+            return false;
+        }
+
+        // Integrate the exponentially decaying speed over this frame.
+        let speed_loss = -(-COAST_DAMPING * seconds).exp_m1();
+        camera.rotate(self.angular_velocity * (speed_loss / COAST_DAMPING));
+        self.angular_velocity *= 1.0 - speed_loss;
+        if camera.pitch.abs() >= MAX_PITCH {
+            self.angular_velocity.y = 0.0;
+        }
+        self.idle_seconds = 0.0;
+        true
     }
 }
 
@@ -77,6 +104,12 @@ pub struct UiPointerActivity(pub bool);
 #[derive(Resource, Default)]
 pub struct WantsPointer(pub bool);
 impl OrbitCamera {
+    fn rotate(&mut self, delta: Vec2) {
+        // Keep the angles within the UI slider ranges. Yaw wraps seamlessly.
+        self.yaw = (self.yaw + delta.x + PI).rem_euclid(TAU) - PI;
+        self.pitch = (self.pitch + delta.y).clamp(-MAX_PITCH, MAX_PITCH);
+    }
+
     /// The ray generator expects a vertical angle even in portrait windows.
     pub(crate) fn vertical_fov(&self, aspect: f32) -> f32 {
         if aspect >= 1.0 {
@@ -128,35 +161,40 @@ pub fn orbit_controller(
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
 ) {
-    let mut active_interaction = ui_activity.0;
+    let left_pressed = mouse.pressed(MouseButton::Left);
+    let mut active_interaction = ui_activity.0 || left_pressed;
+    let seconds = time.delta_secs();
 
-    if wants.0 {
-        // egui owns the pointer: drain motion so it cannot pile up, but continue
-        // the idle timer so merely hovering the panel does not stop auto-orbit.
+    if left_pressed && !wants.0 {
+        if mouse.just_pressed(MouseButton::Left) {
+            interaction.angular_velocity = Vec2::ZERO;
+        }
+        let start_pitch = camera.pitch;
+        let mut yaw_delta = 0.0;
+        for ev in motion.read() {
+            interaction.stop_flyby();
+            // Orbit opposite the pointer so the foreground follows the drag.
+            let delta = Vec2::new(-ev.delta.x, ev.delta.y) * DRAG_RADIANS_PER_PIXEL;
+            camera.rotate(delta);
+            yaw_delta += delta.x;
+        }
+        if seconds > 0.0 {
+            // Sample the applied rotation. Holding still lets the estimate decay.
+            let delta = Vec2::new(yaw_delta, camera.pitch - start_pitch);
+            let velocity = (delta / seconds).clamp_length_max(MAX_DRAG_SPEED);
+            let weight = -(-DRAG_VELOCITY_RESPONSE * seconds).exp_m1();
+            interaction.angular_velocity = interaction.angular_velocity.lerp(velocity, weight);
+        }
+    } else {
+        // Discard hover and UI motion before the next scene drag.
         motion.clear();
-    }
-    if mouse.pressed(MouseButton::Left) {
-        active_interaction = true;
-        if !wants.0 {
-            for ev in motion.read() {
-                interaction.stop_flyby();
-                // Orbit opposite the pointer so the foreground follows the drag.
-                camera.yaw -= ev.delta.x * 0.005;
-                // Keep yaw in (-π, π] so it never drifts out of the UI slider's range
-                // (which would make touching the slider snap the view). cos/sin are
-                // periodic, so the wrap is visually lossless.
-                camera.yaw = (camera.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
-                    - std::f32::consts::PI;
-                // Full pitch range: the basis() has no gimbal pole now (right is yaw-only),
-                // so crossing ±π/2 no longer flips. The ±0.05 margin keeps eye off the
-                // exact origin-axis singularity where forward = ∓Y and yaw is undefined.
-                camera.pitch = (camera.pitch + ev.delta.y * 0.005)
-                    .clamp(-std::f32::consts::PI + 0.05, std::f32::consts::PI - 0.05);
-            }
+        if active_interaction {
+            interaction.angular_velocity = Vec2::ZERO;
         }
     }
     for ev in wheel.read() {
         active_interaction = true;
+        interaction.angular_velocity = Vec2::ZERO;
         if wants.0 {
             continue;
         }
@@ -182,10 +220,9 @@ pub fn orbit_controller(
         return;
     }
 
-    interaction.idle_seconds =
-        (interaction.idle_seconds + time.delta_secs()).min(AUTO_ORBIT_IDLE_DELAY);
+    interaction.idle_seconds = (interaction.idle_seconds + seconds).min(AUTO_ORBIT_IDLE_DELAY);
     if let Some(elapsed) = interaction.flyby_elapsed.as_mut() {
-        *elapsed += time.delta_secs();
+        *elapsed += seconds;
         let t = (*elapsed / FLYBY_DURATION).min(1.0);
         let eased = t * t * (3.0 - 2.0 * t);
         camera.distance = FLYBY_START_DISTANCE.lerp(OrbitCamera::default().distance, eased);
@@ -194,19 +231,17 @@ pub fn orbit_controller(
         }
         return;
     }
+    if interaction.coast(&mut camera, seconds) {
+        return;
+    }
     if camera.auto_rotate && interaction.idle_seconds >= AUTO_ORBIT_IDLE_DELAY {
-        camera.yaw = (camera.yaw
-            + time.delta_secs() * std::f32::consts::TAU / AUTO_ORBIT_PERIOD
-            + std::f32::consts::PI)
-            .rem_euclid(std::f32::consts::TAU)
-            - std::f32::consts::PI;
+        camera.rotate(Vec2::new(seconds * TAU / AUTO_ORBIT_PERIOD, 0.0));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::ecs::system::RunSystemOnce;
     use bevy::input::mouse::MouseScrollUnit;
     use std::time::Duration;
 
@@ -223,6 +258,9 @@ mod tests {
         world.insert_resource(Time::<()>::default());
         world.init_resource::<Messages<MouseMotion>>();
         world.init_resource::<Messages<MouseWheel>>();
+        let mut schedule = Schedule::new(Update);
+        schedule.add_systems(orbit_controller);
+        world.add_schedule(schedule);
         world
     }
 
@@ -237,17 +275,30 @@ mod tests {
                 phase: bevy::input::touch::TouchPhase::Moved,
             });
         }
-        world.run_system_once(orbit_controller).unwrap();
-        let distance = world.resource::<OrbitCamera>().distance;
-        world.resource_mut::<Messages<MouseWheel>>().clear();
-        distance
+        advance(world, 0.0);
+        world.resource::<OrbitCamera>().distance
     }
 
     fn advance(world: &mut World, seconds: f32) {
         world
             .resource_mut::<Time>()
             .advance_by(Duration::from_secs_f32(seconds));
-        world.run_system_once(orbit_controller).unwrap();
+        world.run_schedule(Update);
+        world.resource_mut::<ButtonInput<MouseButton>>().clear();
+    }
+
+    fn drag(world: &mut World, delta: Vec2, seconds: f32) {
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        world.write_message(MouseMotion { delta });
+        advance(world, seconds);
+    }
+
+    fn release_drag(world: &mut World) {
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
     }
 
     #[test]
@@ -360,19 +411,83 @@ mod tests {
         let (start_eye, _, _, _) = world.resource::<OrbitCamera>().basis();
         // Start with a point centered in the view, in front of the orbit pivot.
         let foreground = start_eye * 0.5;
-        world
-            .resource_mut::<ButtonInput<MouseButton>>()
-            .press(MouseButton::Left);
-        world.write_message(MouseMotion {
-            delta: Vec2::new(100.0, 100.0),
-        });
 
-        advance(&mut world, 0.5);
+        drag(&mut world, Vec2::new(100.0, 100.0), 0.5);
 
         let (eye, _, right, up) = world.resource::<OrbitCamera>().basis();
         let direction = foreground - eye;
         assert!(direction.dot(right) > 0.0, "foreground should move right");
         assert!(direction.dot(up) < 0.0, "foreground should move down");
+    }
+
+    #[test]
+    fn drag_coasts_then_waits_before_resuming_auto_orbit() {
+        let mut world = wheel_world(30.0);
+        drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
+        release_drag(&mut world);
+        let released = *world.resource::<OrbitCamera>();
+
+        advance(&mut world, 0.1);
+        let first = *world.resource::<OrbitCamera>();
+        assert!(first.yaw < released.yaw);
+        assert!(first.pitch > released.pitch);
+
+        advance(&mut world, 0.1);
+        let second = *world.resource::<OrbitCamera>();
+        assert!(second.yaw < first.yaw);
+        assert!(first.yaw - second.yaw < released.yaw - first.yaw);
+
+        advance(&mut world, 0.8);
+        let stopped = *world.resource::<OrbitCamera>();
+        advance(&mut world, 1.4);
+        assert!(*world.resource::<OrbitCamera>() == stopped);
+
+        advance(&mut world, 0.2);
+        assert!(world.resource::<OrbitCamera>().yaw > stopped.yaw);
+    }
+
+    #[test]
+    fn holding_the_mouse_still_before_release_stops_the_coast() {
+        let mut world = wheel_world(30.0);
+        drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
+        let stopped = *world.resource::<OrbitCamera>();
+
+        advance(&mut world, 0.3);
+        release_drag(&mut world);
+        advance(&mut world, 0.1);
+
+        assert!(*world.resource::<OrbitCamera>() == stopped);
+    }
+
+    #[test]
+    fn wheel_input_cancels_the_coast() {
+        let mut world = wheel_world(30.0);
+        drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
+        release_drag(&mut world);
+        advance(&mut world, 0.1);
+
+        scroll(&mut world, MouseScrollUnit::Line, &[1.0]);
+        let zoomed = *world.resource::<OrbitCamera>();
+        advance(&mut world, 0.1);
+
+        assert!(*world.resource::<OrbitCamera>() == zoomed);
+    }
+
+    #[test]
+    fn coast_covers_the_same_angle_with_different_frame_times() {
+        let coast = |frames| {
+            let mut world = wheel_world(30.0);
+            drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
+            release_drag(&mut world);
+            for _ in 0..frames {
+                advance(&mut world, 0.2 / frames as f32);
+            }
+            *world.resource::<OrbitCamera>()
+        };
+        let coarse = coast(6);
+        let fine = coast(24);
+        assert!((coarse.yaw - fine.yaw).abs() < 1e-5);
+        assert!((coarse.pitch - fine.pitch).abs() < 1e-5);
     }
 
     #[test]
