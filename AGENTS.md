@@ -41,6 +41,10 @@ cargo test --locked
 cargo build --locked --release
 ```
 
+## Commit Workflow
+
+Create a separate Git commit for each feature as soon as it is complete.
+
 ## Code Conventions & Common Patterns
 
 - Follow standard `rustfmt`; CI treats every Clippy warning as an error. Types/components/resources are nouns; ECS systems use verb names such as `spawn_*`, `resize_*`, `rebuild_*`, `mirror_*`, and `upload_*`; UI groups use `section_*`.
