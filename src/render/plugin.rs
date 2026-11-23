@@ -1,14 +1,20 @@
 use crate::state::{AppState, LoadingProgress, ShaderAssets};
-use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraUpdateSystems, RenderTarget};
 use bevy::image::Image;
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
+use bevy::render::erased_render_asset::prepare_erased_assets;
+use bevy::render::render_asset::prepare_assets;
+use bevy::render::render_resource::{Extent3d, TextureFormat};
 use bevy::render::storage::ShaderBuffer;
+use bevy::render::texture::GpuImage;
+use bevy::render::{Render, RenderApp};
 use bevy::sprite_render::Material2dPlugin;
+use bevy::transform::TransformSystems;
 use bevy_asset_loader::prelude::*;
+use bevy_egui::EguiPostUpdateSet;
 
-use super::material::BlackHoleMaterial;
+use super::material::{BlackHoleMaterial, BlurMaterial, BrightPassMaterial, CompositeMaterial};
 
 /// Lower bound for `render_scale`. Used to clamp the offscreen target resolution
 /// in both spawn and resize paths. The UI slider floor mirrors this literal.
@@ -93,6 +99,10 @@ fn disable_egui_auto_context(mut settings: ResMut<bevy_egui::EguiGlobalSettings>
 
 pub struct BlackHolePlugin;
 
+/// Orders the materials that sample render targets after those textures are prepared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+struct RenderTargetsPrepared;
+
 impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
@@ -127,8 +137,6 @@ impl Plugin for BlackHolePlugin {
                 Update,
                 (
                     crate::camera::orbit_controller.run_if(in_state(AppState::Running)),
-                    mirror_params,
-                    resize_offscreen,
                     nudge_camera,
                 ),
             )
@@ -138,7 +146,14 @@ impl Plugin for BlackHolePlugin {
                 crate::scene::planets::orbit_system.before(crate::scene::planets::upload_planets),
             )
             .add_systems(Update, crate::scene::planets::upload_planets)
-            .add_systems(Update, rebuild_bloom)
+            .add_systems(
+                PostUpdate,
+                (rebuild_bloom, resize_offscreen, mirror_params)
+                    .chain()
+                    .after(EguiPostUpdateSet::EndPass)
+                    .before(CameraUpdateSystems)
+                    .before(TransformSystems::Propagate),
+            )
             .add_systems(
                 bevy_egui::EguiPrimaryContextPass,
                 (
@@ -147,6 +162,18 @@ impl Plugin for BlackHolePlugin {
                     crate::ui::ui_system.run_if(in_state(AppState::Running)),
                 ),
             );
+
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            // Resizing replaces the GPU texture view under the same image handle.
+            render_app.configure_sets(
+                Render,
+                RenderTargetsPrepared
+                    .after(prepare_assets::<GpuImage>)
+                    .before(prepare_erased_assets::<MeshMaterial2d<BrightPassMaterial>>)
+                    .before(prepare_erased_assets::<MeshMaterial2d<BlurMaterial>>)
+                    .before(prepare_erased_assets::<MeshMaterial2d<CompositeMaterial>>),
+            );
+        }
     }
 }
 
@@ -169,6 +196,17 @@ fn on_enter_running() {
     crate::web::remove_loading_screen();
 }
 
+fn scaled_size(size: Vec2, scale: Vec2) -> UVec2 {
+    (size * scale).as_uvec2().max(UVec2::ONE)
+}
+
+fn offscreen_size(window: &Window, scale: f32) -> UVec2 {
+    scaled_size(
+        window.size(),
+        Vec2::splat(scale.clamp(MIN_RENDER_SCALE, 1.0)),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_fullscreen_quad(
     mut commands: Commands,
@@ -186,9 +224,7 @@ fn spawn_fullscreen_quad(
         Ok(w) => w,
         Err(_) => return,
     };
-    let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
-    let w = ((win.width() * scale) as u32).max(1);
-    let h = ((win.height() * scale) as u32).max(1);
+    let UVec2 { x: w, y: h } = offscreen_size(win, params.render_scale);
 
     // Offscreen target at sub-resolution. new_target_texture sets RENDER_ATTACHMENT.
     let offscreen = images.add(Image::new_target_texture(
@@ -538,8 +574,19 @@ fn spawn_bloom_pipeline(
     Some(bloom_final.clone())
 }
 
-/// Recreate the offscreen Image and rescale both quads on window resize,
-/// honoring the live `render_scale` param.
+fn resize_target(images: &mut Assets<Image>, handle: &Handle<Image>, size: UVec2) {
+    if let Some(mut image) = images.get_mut(handle)
+        && image.size() != size
+    {
+        image.resize(Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        });
+    }
+}
+
+/// Synchronizes the render targets with the live window size and render scale.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn resize_offscreen(
     mut images: ResMut<Assets<Image>>,
@@ -550,71 +597,67 @@ fn resize_offscreen(
     bloom2: Query<&BloomTarget2>,
     bloom_final: Query<&BloomFinalTarget>,
     window: Query<&Window>,
-    mut resized: MessageReader<bevy::window::WindowResized>,
-    // Both queries borrow `&mut Transform`. Bevy's conflict checker does not
-    // treat `With<T>` filters as disjoint access, so two such Query params would
-    // trip B0001 — they must be grouped in a ParamSet (borrowed one at a time).
-    mut quads: ParamSet<(
-        // p0: offscreen + bloom quads — rescaled against offscreen resolution.
-        Query<(&mut Transform, &QuadScaleFactor), Without<CompositeQuad>>,
-        // p1: composite quad — rescaled against window resolution.
-        Query<&mut Transform, With<CompositeQuad>>,
-    )>,
+    mut quads: Query<(&mut Transform, &QuadScaleFactor), Without<CompositeQuad>>,
+    mut composite_quads: Query<&mut Transform, With<CompositeQuad>>,
+    mut cameras: Query<(&Camera, &RenderTarget, &mut Projection), With<Nudgable>>,
+    mut blur_materials: ResMut<Assets<BlurMaterial>>,
 ) {
-    if resized.read().next().is_none() {
-        return;
-    }
     let Ok(win) = window.single() else {
         return;
     };
-    let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
-    let w = ((win.width() * scale) as u32).max(1);
-    let h = ((win.height() * scale) as u32).max(1);
-    if let Ok(handle) = target.single() {
-        let img = Image::new_target_texture(w, h, TextureFormat::Rgba16Float, None);
-        // insert returns Result in 0.19 (Err if the asset is locked this frame).
-        // Resize fires repeatedly while the user drags, so a dropped frame's
-        // insert is harmless — it'll succeed on the next WindowResized.
-        let _ = images.insert(handle.0.id(), img);
+    for transform in &mut composite_quads {
+        transform
+            .map_unchanged(|t| &mut t.scale)
+            .set_if_neq((win.size() / 2.0).extend(1.0));
     }
-    // Bloom pyramid (queries return empty when bloom is off).
-    let bw = ((w as f32 * 0.5) as u32).max(1);
-    let bh = ((h as f32 * 0.5) as u32).max(1);
-    let b1w = ((w as f32 * 0.25) as u32).max(1);
-    let b1h = ((h as f32 * 0.25) as u32).max(1);
-    let b2w = ((w as f32 * 0.125) as u32).max(1);
-    let b2h = ((h as f32 * 0.125) as u32).max(1);
-    if let Ok(t) = bloom0.single() {
-        let _ = images.insert(
-            t.0.id(),
-            Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None),
-        );
+    let Ok(target) = target.single() else {
+        return;
+    };
+    let size = offscreen_size(win, params.render_scale);
+    if images
+        .get(&target.0)
+        .is_none_or(|image| image.size() == size)
+    {
+        return;
     }
-    if let Ok(t) = bloom1.single() {
-        let _ = images.insert(
-            t.0.id(),
-            Image::new_target_texture(b1w, b1h, TextureFormat::Rgba16Float, None),
-        );
+
+    resize_target(&mut images, &target.0, size);
+    let half = (size / 2).max(UVec2::ONE);
+    let quarter = (size / 4).max(UVec2::ONE);
+    let eighth = (size / 8).max(UVec2::ONE);
+    if let Ok(target) = bloom0.single() {
+        resize_target(&mut images, &target.0, half);
     }
-    if let Ok(t) = bloom2.single() {
-        let _ = images.insert(
-            t.0.id(),
-            Image::new_target_texture(b2w, b2h, TextureFormat::Rgba16Float, None),
-        );
+    if let Ok(target) = bloom1.single() {
+        resize_target(&mut images, &target.0, quarter);
     }
-    if let Ok(t) = bloom_final.single() {
-        let _ = images.insert(
-            t.0.id(),
-            Image::new_target_texture(bw, bh, TextureFormat::Rgba16Float, None),
-        );
+    if let Ok(target) = bloom2.single() {
+        resize_target(&mut images, &target.0, eighth);
     }
-    // Rescale offscreen + bloom quads against the offscreen resolution.
-    for (mut t, f) in &mut quads.p0() {
-        t.scale = Vec3::new(w as f32 * f.0 / 2.0, h as f32 * f.1 / 2.0, 1.0);
+    if let Ok(target) = bloom_final.single() {
+        resize_target(&mut images, &target.0, half);
     }
-    // Rescale the composite quad against the window resolution.
-    for mut t in &mut quads.p1() {
-        t.scale = Vec3::new(win.width() / 2.0, win.height() / 2.0, 1.0);
+
+    for (transform, factor) in &mut quads {
+        let size = scaled_size(size.as_vec2(), Vec2::new(factor.0, factor.1));
+        transform
+            .map_unchanged(|t| &mut t.scale)
+            .set_if_neq((size.as_vec2() / 2.0).extend(1.0));
+    }
+    for (_, material) in blur_materials.iter_mut() {
+        if let Some(source) = images.get(&material.source) {
+            material.uniform.texel_size = source.size_f32().recip();
+        }
+    }
+    // Bevy emits image asset events after updating cameras. Mark projections
+    // here so their cached target sizes match the resized textures this frame.
+    for (camera, target, mut projection) in &mut cameras {
+        if let RenderTarget::Image(target) = target
+            && let Some(image) = images.get(&target.handle)
+            && camera.physical_target_size() != Some(image.size())
+        {
+            projection.set_changed();
+        }
     }
 }
 
@@ -687,9 +730,7 @@ fn rebuild_bloom(
     let Ok(win) = window.single() else {
         return;
     };
-    let scale = params.render_scale.clamp(MIN_RENDER_SCALE, 1.0);
-    let w = ((win.width() * scale) as u32).max(1);
-    let h = ((win.height() * scale) as u32).max(1);
+    let UVec2 { x: w, y: h } = offscreen_size(win, params.render_scale);
     let Ok(offscreen_t) = offscreen_target.single() else {
         return;
     };
@@ -793,5 +834,143 @@ fn mirror_params(
     for (_, mat) in composite_materials.iter_mut() {
         mat.uniform.bloom_strength = params.bloom_strength;
         mat.uniform.exposure = params.exposure;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::BlackHoleParams;
+    use crate::ui::preset::{Preset, apply};
+    use bevy::asset::{AssetEvent, AssetEventSystems};
+    use bevy::ecs::schedule::common_conditions::run_once;
+    use bevy::render::{camera::camera_system, texture::ManualTextureViews};
+    use bevy::window::{PrimaryWindow, WindowCreated, WindowResized, WindowScaleFactorChanged};
+
+    fn target_size(world: &World, handle: &Handle<Image>) -> UVec2 {
+        world
+            .resource::<Assets<Image>>()
+            .get(handle)
+            .unwrap()
+            .size()
+    }
+
+    #[test]
+    fn render_scale_resizes_targets_without_window_events() {
+        let mut params = BlackHoleParams::default();
+        apply(Preset::Cinematic, &mut params);
+        let mut app = App::new();
+        app.add_plugins(AssetPlugin::default())
+            .init_asset::<Image>()
+            .init_asset::<Mesh>()
+            .init_asset::<ShaderBuffer>()
+            .init_asset::<BlackHoleMaterial>()
+            .init_asset::<CompositeMaterial>()
+            .init_asset::<BrightPassMaterial>()
+            .init_asset::<BlurMaterial>()
+            .init_resource::<ManualTextureViews>()
+            .add_message::<WindowCreated>()
+            .add_message::<WindowResized>()
+            .add_message::<WindowScaleFactorChanged>()
+            .insert_resource(params)
+            .add_systems(Startup, spawn_fullscreen_quad)
+            .add_systems(
+                PostUpdate,
+                (
+                    (rebuild_bloom, resize_offscreen)
+                        .chain()
+                        .after(EguiPostUpdateSet::EndPass)
+                        .before(CameraUpdateSystems),
+                    camera_system
+                        .in_set(CameraUpdateSystems)
+                        .before(AssetEventSystems),
+                ),
+            );
+        app.world_mut().spawn((
+            Window {
+                resolution: (1280, 720).into(),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.update();
+        let world = app.world_mut();
+        let scene = world
+            .query::<&OffscreenTarget>()
+            .single(world)
+            .unwrap()
+            .0
+            .clone();
+        assert_eq!(target_size(world, &scene), UVec2::new(960, 540));
+
+        app.add_systems(
+            PostUpdate,
+            (|mut params: ResMut<BlackHoleParams>| params.render_scale = 0.5)
+                .in_set(EguiPostUpdateSet::EndPass)
+                .run_if(run_once),
+        );
+        app.update();
+        let world = app.world_mut();
+        let bloom = world
+            .query::<&BloomTarget0>()
+            .single(world)
+            .unwrap()
+            .0
+            .clone();
+        assert_eq!(target_size(world, &scene), UVec2::new(640, 360));
+        assert_eq!(target_size(world, &bloom), UVec2::new(320, 180));
+        let blur_materials = world.resource::<Assets<BlurMaterial>>();
+        let (_, first_blur) = blur_materials
+            .iter()
+            .find(|(_, material)| material.source == bloom)
+            .unwrap();
+        assert_eq!(
+            first_blur.uniform.texel_size,
+            Vec2::new(1.0 / 320.0, 1.0 / 180.0)
+        );
+        assert_eq!(
+            world
+                .query_filtered::<&Camera, With<OffscreenCamera>>()
+                .single(world)
+                .unwrap()
+                .physical_target_size(),
+            Some(UVec2::new(640, 360))
+        );
+        assert_eq!(
+            world
+                .query_filtered::<&Transform, With<CompositeQuad>>()
+                .single(world)
+                .unwrap()
+                .scale,
+            Vec3::new(640.0, 360.0, 1.0)
+        );
+
+        apply(
+            Preset::Cinematic,
+            &mut app.world_mut().resource_mut::<BlackHoleParams>(),
+        );
+        app.update();
+        assert_eq!(target_size(app.world(), &scene), UVec2::new(960, 540));
+        apply(
+            Preset::Performance,
+            &mut app.world_mut().resource_mut::<BlackHoleParams>(),
+        );
+        app.update();
+        let world = app.world_mut();
+        let bloom = world.query::<&BloomFinalTarget>().single(world).unwrap();
+        assert_eq!(target_size(world, &scene), UVec2::new(640, 360));
+        assert_eq!(target_size(world, &bloom.0), UVec2::new(320, 180));
+
+        let mut image_events = world
+            .resource::<Messages<AssetEvent<Image>>>()
+            .get_cursor_current();
+        world.resource_mut::<BlackHoleParams>().render_scale = 0.5001;
+        app.update();
+        let events = app.world().resource::<Messages<AssetEvent<Image>>>();
+        assert!(
+            !image_events
+                .read(events)
+                .any(|event| matches!(event, AssetEvent::Modified { .. }))
+        );
     }
 }
