@@ -1,16 +1,13 @@
 //! Equatorial Kerr test-particle and light trajectories in Boyer–Lindquist coordinates.
 
-use std::f64::consts::TAU;
+pub use super::geodesic::{IntegrationError, Outcome, Sample, horizon_radius};
 
-const MASS: f64 = 0.5;
-const HORIZON_MARGIN: f64 = 0.004;
+use super::geodesic::{self, Geodesic, HORIZON_MARGIN, Limits, MASS, Path, local_frame};
+
 const ESCAPE_RADIUS: f64 = 120.0;
 const TIME_LIMIT: f64 = 600.0;
 const MAX_STEPS: usize = 24_000;
 const MAX_TIME_STEP: f64 = 0.75;
-const MIN_STEP: f64 = 1e-9;
-const TOLERANCE: f64 = 1e-9;
-const SOLAR_LIGHT_CROSSING_SECONDS: f64 = 9.850_981_9e-6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProbeKind {
@@ -58,7 +55,7 @@ impl Launch {
     }
 
     pub fn seconds(self, time: f64) -> f64 {
-        time * self.solar_masses * SOLAR_LIGHT_CROSSING_SECONDS
+        geodesic::seconds(self.solar_masses, time)
     }
 
     /// Local speed for a positive-azimuth circular orbit, where one exists.
@@ -79,61 +76,10 @@ impl Launch {
     }
 }
 
-pub fn horizon_radius(spin: f64) -> f64 {
-    MASS * (1.0 + (1.0 - spin * spin).max(0.0).sqrt())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    HorizonLimit,
-    Escaped,
-    TimeLimit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IntegrationError {
-    InvalidLaunch,
-    StepLimit,
-    NumericalFailure,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Sample {
-    pub radius: f64,
-    pub azimuth: f64,
-    pub coordinate_time: f64,
-    pub proper_time: Option<f64>,
-}
-
-impl Sample {
-    pub fn xy(self) -> [f64; 2] {
-        [
-            self.radius * self.azimuth.cos(),
-            self.radius * self.azimuth.sin(),
-        ]
-    }
-
-    fn interpolate(self, next: Self, time: f64) -> Self {
-        let fraction =
-            (time - self.coordinate_time) / (next.coordinate_time - self.coordinate_time);
-        Self {
-            radius: self.radius + fraction * (next.radius - self.radius),
-            azimuth: self.azimuth + fraction * (next.azimuth - self.azimuth),
-            coordinate_time: time,
-            proper_time: self
-                .proper_time
-                .zip(next.proper_time)
-                .map(|(a, b)| a + fraction * (b - a)),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Trajectory {
     launch: Launch,
-    samples: Vec<Sample>,
-    outcome: Outcome,
-    closest_radius: f64,
+    path: Path,
 }
 
 impl Trajectory {
@@ -142,114 +88,24 @@ impl Trajectory {
     }
 
     pub fn samples(&self) -> &[Sample] {
-        &self.samples
+        self.path.samples()
     }
 
     pub fn end(&self) -> Sample {
-        self.samples[self.samples.len() - 1]
+        self.path.end()
     }
 
     pub fn outcome(&self) -> Outcome {
-        self.outcome
+        self.path.outcome
     }
 
     pub fn closest_radius(&self) -> f64 {
-        self.closest_radius
+        self.path.closest_radius
     }
 
     /// Sample at a shared coordinate time, holding the initial and final positions outside the run.
     pub fn at(&self, time: f64) -> Sample {
-        let i = self
-            .samples
-            .partition_point(|sample| sample.coordinate_time < time);
-        match i {
-            0 => self.samples[0],
-            i if i == self.samples.len() => self.end(),
-            i => self.samples[i - 1].interpolate(self.samples[i], time),
-        }
-    }
-}
-
-// Lapse, local frame rotation, and azimuthal length per radian at the equator.
-fn local_frame(r: f64, a: f64) -> (f64, f64, f64) {
-    let r2 = r * r;
-    let delta = r2 - 2.0 * MASS * r + a * a;
-    let big_a = (r2 + a * a).powi(2) - a * a * delta;
-    (
-        r * (delta / big_a).sqrt(),
-        2.0 * MASS * a * r / big_a,
-        big_a.sqrt() / r,
-    )
-}
-
-// Radius, radial velocity, azimuth and coordinate time. The integration
-// parameter is proper time for a spacecraft and affine time for light.
-type State = [f64; 4];
-
-struct Geodesic {
-    a: f64,
-    energy: f64,
-    angular_momentum: f64,
-    mu_squared: f64,
-}
-
-impl Geodesic {
-    fn start(launch: Launch) -> (Self, State) {
-        let a = launch.spin * MASS;
-        let r = launch.radius;
-        let (lapse, omega, azimuth_scale) = local_frame(r, a);
-        let (local_time, local_speed, mu_squared) = match launch.kind {
-            ProbeKind::Light => (1.0, 1.0, 0.0),
-            ProbeKind::Spacecraft => {
-                let gamma = (1.0 - launch.speed * launch.speed).sqrt().recip();
-                (gamma, launch.speed, 1.0)
-            }
-        };
-        let (sin, cos) = launch.aim.sin_cos();
-        let angular_momentum = azimuth_scale * local_time * local_speed * sin;
-        let energy = lapse * local_time + omega * angular_momentum;
-        let delta = r * r - 2.0 * MASS * r + a * a;
-        let radial_velocity = delta.sqrt() / r * local_time * local_speed * cos;
-        (
-            Self {
-                a,
-                energy,
-                angular_momentum,
-                mu_squared,
-            },
-            [r, radial_velocity, launch.bearing.rem_euclid(TAU), 0.0],
-        )
-    }
-
-    fn derivative(&self, [r, v, _, _]: State) -> State {
-        // Carter's separated equatorial equations. Differentiate R/r⁴ to
-        // advance v through turning points without choosing a square-root sign.
-        let r2 = r * r;
-        let r4 = r2 * r2;
-        let a = self.a;
-        let e = self.energy;
-        let l_a_e = self.angular_momentum - a * e;
-        let delta = r2 - 2.0 * MASS * r + a * a;
-        let p = r2 * e - a * l_a_e;
-        let q = self.mu_squared * r2 + l_a_e * l_a_e;
-        let radial = p * p - delta * q;
-        let radial_derivative =
-            4.0 * r * e * p - 2.0 * (r - MASS) * q - 2.0 * self.mu_squared * r * delta;
-        [
-            v,
-            (radial_derivative - 4.0 * radial / r) / (2.0 * r4),
-            (l_a_e + a * p / delta) / r2,
-            (a * l_a_e + (r2 + a * a) * p / delta) / r2,
-        ]
-    }
-
-    fn rk4(&self, state: State, h: f64) -> State {
-        let add = |slope: State, step| std::array::from_fn(|i| state[i] + step * slope[i]);
-        let k1 = self.derivative(state);
-        let k2 = self.derivative(add(k1, h * 0.5));
-        let k3 = self.derivative(add(k2, h * 0.5));
-        let k4 = self.derivative(add(k3, h));
-        std::array::from_fn(|i| state[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]))
+        self.path.at(time)
     }
 }
 
@@ -262,88 +118,31 @@ fn integrate_with_budget(launch: Launch, max_steps: usize) -> Result<Trajectory,
         return Err(IntegrationError::InvalidLaunch);
     }
 
-    let (equations, mut state) = Geodesic::start(launch);
+    let (equations, state) = Geodesic::from_local(
+        launch.spin,
+        launch.radius,
+        launch.bearing,
+        0.0,
+        (launch.kind == ProbeKind::Spacecraft).then_some(launch.speed),
+        launch.aim,
+    );
     let horizon = horizon_radius(launch.spin);
-    let capture = horizon + HORIZON_MARGIN;
-    let mut elapsed = 0.0;
-    let mut closest_radius = launch.radius;
-    let sample = |state: State, elapsed| Sample {
-        radius: state[0],
-        azimuth: state[2],
-        coordinate_time: state[3],
-        proper_time: (launch.kind == ProbeKind::Spacecraft).then_some(elapsed),
+    let limits = Limits {
+        inner_radius: horizon + HORIZON_MARGIN,
+        outer_radius: equations.unbound().then_some(ESCAPE_RADIUS),
+        end_time: TIME_LIMIT,
+        replay_step: MAX_TIME_STEP,
+        max_steps,
+        inbound_radius: None,
     };
-    let mut samples = vec![sample(state, elapsed)];
-    let mut step = 0.1_f64;
-
-    for _ in 0..max_steps {
-        let derivative = equations.derivative(state);
-        // Resolve the final approach and limit the interval between replay samples.
-        let radial_step = (state[0] - horizon) * 0.08 / derivative[0].abs().max(1e-6);
-        let clock_step = MAX_TIME_STEP / derivative[3];
-        step = step.min(radial_step).min(clock_step);
-        if !step.is_finite() || step < MIN_STEP {
-            return Err(IntegrationError::NumericalFailure);
-        }
-        let full = equations.rk4(state, step);
-        let half = equations.rk4(equations.rk4(state, step * 0.5), step * 0.5);
-        if !full.into_iter().chain(half).all(f64::is_finite)
-            || half[0] <= horizon
-            || half[3] <= state[3]
-        {
-            step *= 0.25;
-            continue;
-        }
-        let error = (0..state.len())
-            .map(|i| (half[i] - full[i]).abs() / (1.0 + (half[i] - state[i]).abs()))
-            .fold(0.0_f64, f64::max);
-        let growth = (0.9 * (TOLERANCE / error).powf(0.2)).clamp(0.2, 2.0);
-        if error > TOLERANCE {
-            step *= growth;
-            continue;
-        }
-
-        // Take the first termination event within the accepted step.
-        let mut terminal = (1.0, None);
-        let mut stop_at = |i: usize, boundary: f64, outcome| {
-            let fraction = (boundary - state[i]) / (half[i] - state[i]);
-            if fraction <= terminal.0 {
-                terminal = (fraction, Some(outcome));
-            }
-        };
-        if half[0] <= capture {
-            stop_at(0, capture, Outcome::HorizonLimit);
-        }
-        if half[0] >= ESCAPE_RADIUS
-            && state[0] < ESCAPE_RADIUS
-            && half[1] > 0.0
-            && equations.energy > equations.mu_squared
-        {
-            stop_at(0, ESCAPE_RADIUS, Outcome::Escaped);
-        }
-        if half[3] >= TIME_LIMIT {
-            stop_at(3, TIME_LIMIT, Outcome::TimeLimit);
-        }
-        let (fraction, outcome) = terminal;
-        state = std::array::from_fn(|i| state[i] + fraction * (half[i] - state[i]));
-        elapsed += fraction * step;
-        closest_radius = closest_radius.min(state[0]);
-        samples.push(sample(state, elapsed));
-        if let Some(outcome) = outcome {
-            return Ok(Trajectory {
-                launch,
-                samples,
-                outcome,
-                closest_radius,
-            });
-        }
-        step *= growth;
-    }
-    Err(IntegrationError::StepLimit)
+    let path = geodesic::integrate(equations, state, horizon, limits)?;
+    Ok(Trajectory { launch, path })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::TAU;
+
     use super::*;
 
     #[test]

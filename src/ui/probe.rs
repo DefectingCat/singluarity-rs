@@ -10,6 +10,7 @@ use crate::camera::OrbitCamera;
 use crate::params::BlackHoleParams;
 use crate::physics::probe::{IntegrationError, Launch, Outcome, ProbeKind, Trajectory, integrate};
 use crate::ui::style::{ACCENT, MUTED_TEXT, PANEL_FILL, panel_frame};
+use crate::ui::trajectory::clock;
 
 const RUN_STYLES: [(char, Color32); 6] = [
     ('A', ACCENT),
@@ -565,20 +566,6 @@ fn angle_slider(ui: &mut Ui, label: &str, angle: &mut f64) {
     super::sections::slider(ui, label, &mut degrees, -180.0..=180.0, 1, "°", false);
     if degrees != initial {
         *angle = degrees.to_radians();
-    }
-}
-
-fn clock(seconds: f64) -> String {
-    if seconds >= 86_400.0 {
-        format!("{:.2} d", seconds / 86_400.0)
-    } else if seconds >= 3_600.0 {
-        format!("{:.2} h", seconds / 3600.0)
-    } else if seconds >= 1.0 {
-        format!("{seconds:.2} s")
-    } else if seconds >= 0.001 {
-        format!("{:.2} ms", seconds * 1000.0)
-    } else {
-        format!("{:.2} µs", seconds * 1e6)
     }
 }
 

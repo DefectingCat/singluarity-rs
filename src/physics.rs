@@ -12,7 +12,10 @@ use bevy::math::{Vec3, Vec4};
 
 pub const RS: f32 = 1.0;
 
+mod geodesic;
 pub mod probe;
+pub mod stellar;
+
 /// Critical impact parameter for a Schwarzschild hole: bcrit = (3*sqrt(3)/2) * Rs.
 /// Written as a literal because `f32::sqrt` is not `const` on stable Rust.
 /// (3 * sqrt(3) / 2 = 2.598076211353316...)

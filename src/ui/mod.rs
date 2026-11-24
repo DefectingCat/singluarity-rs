@@ -2,7 +2,9 @@ pub mod loading;
 pub mod preset;
 mod probe;
 mod sections;
+mod stellar;
 mod style;
+mod trajectory;
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Align2, Button, Layout, RichText, Ui};
@@ -44,6 +46,7 @@ pub struct Controls {
     collapsed: bool,
     preset: Preset,
     probe: probe::ProbeLab,
+    stellar: stellar::StellarLab,
 }
 
 impl Default for Controls {
@@ -53,6 +56,7 @@ impl Default for Controls {
             collapsed: true,
             preset: Preset::Custom,
             probe: probe::ProbeLab::default(),
+            stellar: stellar::StellarLab::default(),
         }
     }
 }
@@ -122,6 +126,9 @@ impl Controls {
         if self.probe.is_open() {
             return self.probe.show(ctx, camera, params);
         }
+        if self.stellar.is_open() {
+            return self.stellar.show(ctx, camera, params);
+        }
         if !ctx.text_edit_focused() {
             let tab_available = !ctx.egui_wants_keyboard_input();
             let toggle = ctx.input_mut(|input| {
@@ -135,7 +142,7 @@ impl Controls {
         let narrow = viewport.width() <= 680.0;
         let inset = if narrow { 12.0 } else { 20.0 };
         if self.collapsed {
-            let size = egui::vec2(218.0, 38.0);
+            let size = egui::vec2(300.0, 38.0);
             return egui::Area::new(egui::Id::new("controls_launcher"))
                 .fixed_pos(egui::pos2(
                     viewport.right() - inset - size.x,
@@ -147,9 +154,10 @@ impl Controls {
                     panel_frame(9).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            self.probe.launcher(ui, [114.0, 36.0]);
+                            self.probe.launcher(ui, [109.0, 36.0]);
+                            self.stellar.launcher(ui, [90.0, 36.0]);
                             if ui
-                                .add_sized([102.0, 36.0], Button::new("Controls").frame(false))
+                                .add_sized([99.0, 36.0], Button::new("Controls").frame(false))
                                 .on_hover_text("Show controls (H / Tab)")
                                 .clicked()
                             {
@@ -229,10 +237,13 @@ impl Controls {
                             {
                                 self.collapsed = true;
                             }
-                            self.probe.launcher(ui, [108.0, 31.0]);
                         });
                     });
                 });
+            ui.horizontal(|ui| {
+                self.probe.launcher(ui, [108.0, 31.0]);
+                self.stellar.launcher(ui, [91.0, 31.0]);
+            });
             self.tabs(ui);
             ui.separator();
 
@@ -406,7 +417,7 @@ mod tests {
         frame(vec![h]);
         let (launcher, over_collapsed_panel) = frame(vec![panel_point]);
         assert!(launcher.height() <= 40.0);
-        assert!(launcher.width() <= 220.0);
+        assert!(launcher.width() <= 302.0);
         assert!(!over_collapsed_panel);
         let (next_launcher, over_launcher) =
             frame(vec![egui::Event::PointerMoved(launcher.center())]);
