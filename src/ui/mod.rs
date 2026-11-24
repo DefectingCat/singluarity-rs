@@ -203,7 +203,7 @@ impl Controls {
                 panel_progress,
                 toolbar_reveal,
                 open,
-                |ui, height| self.inspector(ui, height, params, camera, orbit),
+                |ui, _| self.inspector(ui, params, camera, orbit),
             );
             if open {
                 panel = surface.rect;
@@ -232,7 +232,6 @@ impl Controls {
     fn inspector(
         &mut self,
         ui: &mut Ui,
-        max_height: f32,
         params: &mut BlackHoleParams,
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
@@ -241,7 +240,7 @@ impl Controls {
         ui.separator();
 
         // Keep preset and reset controls available while the tab scrolls.
-        let body_height = (max_height - ui.min_size().y - 73.0).max(18.0);
+        let body_height = (ui.available_height() - 66.0).max(0.0);
         let tab = self.tab;
         egui::ScrollArea::vertical()
             .id_salt(tab)
@@ -390,6 +389,7 @@ mod tests {
         style::setup(&ctx);
         let mut controls = Controls {
             collapsed: false,
+            tab: ControlTab::Effects,
             ..Default::default()
         };
         let mut camera = OrbitCamera::default();
@@ -431,6 +431,25 @@ mod tests {
         assert!(viewport.contains_rect(inspector));
         assert!(inspector.height() < viewport.height());
         assert!(expanded_offset.x < -0.12);
+
+        let effects_group = egui::pos2(672.0, 151.0);
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(effects_group),
+                egui::Event::PointerButton {
+                    pos: effects_group,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        for _ in 0..28 {
+            frame(Vec::new());
+        }
+        let ([_, expanded_group, _], _, _) = frame(Vec::new());
+        assert!(expanded_group.height() > inspector.height());
+        assert!(viewport.contains_rect(expanded_group));
 
         let h = egui::Event::Key {
             key: egui::Key::H,
