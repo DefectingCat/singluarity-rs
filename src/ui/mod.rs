@@ -88,7 +88,7 @@ pub fn ui_system(
     };
 
     let planets_before = planet_configuration(&params);
-    let rect = if controls.stellar.is_open() {
+    let regions = if controls.stellar.is_active() {
         controls.stellar.show(ctx, &camera, &params, &mut framing)
     } else {
         if controls.probe.is_open() {
@@ -96,14 +96,18 @@ pub fn ui_system(
         } else {
             framing.approach(SceneFraming::default(), ctx.input(|input| input.stable_dt));
         }
-        controls.show(ctx, &mut params, &mut camera, &mut orbit)
+        [
+            controls.show(ctx, &mut params, &mut camera, &mut orbit),
+            egui::Rect::NOTHING,
+            egui::Rect::NOTHING,
+        ]
     };
     if planets_before != planet_configuration(&params) {
         planet_dirty.0 = true;
     }
 
     ui_activity.0 = ctx.egui_is_using_pointer();
-    wants.0 = ui_activity.0 || pointer_over_controls(ctx, rect);
+    wants.0 = ui_activity.0 || pointer_over_controls(ctx, &regions);
 }
 
 fn planet_configuration(params: &BlackHoleParams) -> (bool, u32, f32, u32) {
@@ -115,14 +119,14 @@ fn planet_configuration(params: &BlackHoleParams) -> (bool, u32, f32, u32) {
     )
 }
 
-fn pointer_over_controls(ctx: &egui::Context, rect: egui::Rect) -> bool {
+fn pointer_over_controls(ctx: &egui::Context, regions: &[egui::Rect]) -> bool {
     // The actual frame bounds cover hover and presses. Popups can extend
     // beyond those bounds. The decorative shadow does not capture input.
     ctx.input(|input| {
         input
             .pointer
             .interact_pos()
-            .is_some_and(|pos| rect.contains(pos))
+            .is_some_and(|pos| regions.iter().any(|rect| rect.contains(pos)))
     }) || (ctx.any_popup_open() && ctx.is_pointer_over_egui())
 }
 
@@ -404,7 +408,7 @@ mod tests {
             let mut result = None;
             let mut output = ctx.run_ui(input, |_| {
                 let rect = controls.show(&ctx, &mut params, &mut camera, &mut orbit);
-                result = Some((rect, pointer_over_controls(&ctx, rect)));
+                result = Some((rect, pointer_over_controls(&ctx, &[rect])));
             });
             output.textures_delta.clear();
             result.unwrap()

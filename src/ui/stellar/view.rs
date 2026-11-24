@@ -6,7 +6,7 @@ use crate::physics::stellar::{Experiment, HORIZON, Outcome, Pass, Sample};
 use crate::ui::style::{EXTREME_BG, MUTED_TEXT};
 use crate::ui::trajectory::{MapProjection, SceneProjection, draw_line, grid};
 
-use super::{COLORS, Mode, Settings, TIDAL_RING};
+use super::{COLORS, Mode, Settings, TIDAL_RING, TRANSITION_SECONDS};
 
 pub(super) fn map(ui: &mut Ui, settings: &mut Settings, experiment: &Experiment, height: f32) {
     ui.horizontal_wrapped(|ui| {
@@ -29,7 +29,15 @@ pub(super) fn map(ui: &mut Ui, settings: &mut Settings, experiment: &Experiment,
 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let base = experiment.launch_radius as f32 * 1.10;
-    let extent = (base * settings.zoom).max(1.25);
+    let zoom = ui
+        .ctx()
+        .animate_value_with_time(
+            ui.id().with("orbit_zoom"),
+            settings.zoom.ln(),
+            TRANSITION_SECONDS,
+        )
+        .exp();
+    let extent = (base * zoom).max(1.25);
     let projection = MapProjection {
         center: rect.center(),
         scale: rect.width().min(rect.height()) * 0.5 / extent,
@@ -53,7 +61,7 @@ pub(super) fn map(ui: &mut Ui, settings: &mut Settings, experiment: &Experiment,
     draw_passes(&painter, settings, experiment, |sample| {
         Some(projection.project(sample.xy()))
     });
-    for (pass, color) in visible_passes(settings, experiment) {
+    for (pass, color, opacity) in visible_passes(ui.ctx(), settings, experiment) {
         if let Some(event) = pass.events.encounter
             && matches!(
                 pass.outcome,
@@ -63,8 +71,8 @@ pub(super) fn map(ui: &mut Ui, settings: &mut Settings, experiment: &Experiment,
             painter.circle(
                 projection.project(event.xy()),
                 3.3,
-                EXTREME_BG,
-                Stroke::new(1.4, color),
+                EXTREME_BG.gamma_multiply(opacity),
+                Stroke::new(1.4, color.gamma_multiply(opacity)),
             );
         }
     }
@@ -96,11 +104,13 @@ pub(super) fn scene(
     settings: &Settings,
     experiment: &Experiment,
     framing: SceneFraming,
+    opacity: f32,
 ) {
     let rect = ctx.viewport_rect();
-    let painter = ctx
+    let mut painter = ctx
         .layer_painter(egui::LayerId::background())
         .with_clip_rect(rect);
+    painter.multiply_opacity(opacity);
     let projection = SceneProjection::new(rect, camera, params, framing);
     draw_passes(&painter, settings, experiment, |sample| {
         projection.project(sample)
@@ -108,15 +118,23 @@ pub(super) fn scene(
 }
 
 fn visible_passes<'a>(
+    ctx: &'a egui::Context,
     settings: &'a Settings,
     experiment: &'a Experiment,
-) -> impl Iterator<Item = (&'a Pass, Color32)> {
+) -> impl Iterator<Item = (&'a Pass, Color32, f32)> {
     experiment
         .passes
         .iter()
         .enumerate()
-        .filter(|&(index, _)| settings.shows(index))
-        .map(|(index, pass)| {
+        .filter_map(|(index, pass)| {
+            let opacity = ctx.animate_bool_with_time(
+                egui::Id::new(("stellar_pass", settings.mode, index)),
+                settings.shows(index),
+                TRANSITION_SECONDS,
+            );
+            if opacity <= 0.0 {
+                return None;
+            }
             let color = if settings.mode == Mode::Custom {
                 match pass.outcome {
                     Outcome::DistantPass => COLORS[0],
@@ -128,7 +146,7 @@ fn visible_passes<'a>(
             } else {
                 COLORS[index]
             };
-            (pass, color)
+            Some((pass, color, opacity))
         })
 }
 
@@ -139,21 +157,23 @@ fn draw_passes(
     project: impl Fn(Sample) -> Option<Pos2>,
 ) {
     // Draw the paths first, so a body's marker stays readable at intersections.
-    for (pass, color) in visible_passes(settings, experiment) {
+    for (pass, color, opacity) in visible_passes(painter.ctx(), settings, experiment) {
         let Some(path) = &pass.path else { continue };
+        let mut painter = painter.clone();
+        painter.multiply_opacity(opacity);
         let time = settings.replay.time;
         let passed = path.samples().partition_point(|s| s.coordinate_time < time);
         let current = path.at(time);
         let near_capture = |s: Sample| pass.outcome == Outcome::DirectCapture && s.radius < 1.55;
         let outer = |s: Sample| if near_capture(s) { None } else { project(s) };
         draw_line(
-            painter,
+            &painter,
             path.samples().iter().copied(),
             Stroke::new(1.1, color.gamma_multiply(0.42)),
             &outer,
         );
         draw_line(
-            painter,
+            &painter,
             path.samples()[..passed].iter().copied().chain([current]),
             Stroke::new(1.8, color.gamma_multiply(0.84)),
             &outer,
@@ -175,8 +195,10 @@ fn draw_passes(
             }
         }
     }
-    for (pass, color) in visible_passes(settings, experiment) {
+    for (pass, color, opacity) in visible_passes(painter.ctx(), settings, experiment) {
         let Some(path) = &pass.path else { continue };
+        let mut painter = painter.clone();
+        painter.multiply_opacity(opacity);
         let time = settings.replay.time;
         if pass
             .events
