@@ -54,8 +54,7 @@ struct BlackHoleUniforms {
     jets_enabled: u32,      // 0=off, 1=on
     jets_strength: f32,     // jet brightness multiplier
     aa_samples: u32,        // base ring supersample count (1/2/4)
-    _pad6: f32,             // explicit round-up to 16-byte uniform alignment
-    _pad7: f32,             //   (matches BlackHoleUniforms in material.rs byte-for-byte)
+    screen_offset: vec2<f32>,
     disk_clumps: array<DiskClump, MAX_DISK_CLUMPS>,
 };
 
@@ -879,8 +878,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     pixel_size_uv = fwidth(in.uv.y);
 
     let aspect = uniforms.resolution.x / uniforms.resolution.y;
-    // The quad uses top-left UVs, while the ray basis points up in world space.
-    let base_uv = vec2f((2.0 * in.uv.x - 1.0) * aspect, 1.0 - 2.0 * in.uv.y);
+    // The offset uses the quad's top-left UVs. The ray basis points up in world space.
+    let uv = in.uv - uniforms.screen_offset;
+    let base_uv = vec2f((2.0 * uv.x - 1.0) * aspect, 1.0 - 2.0 * uv.y);
     let center_ray = ray_direction(base_uv);
 
     // Trace one ray through the outer disk and sky. The thin rings closest

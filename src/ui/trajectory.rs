@@ -3,7 +3,7 @@
 use bevy::prelude::{Quat, Vec3};
 use bevy_egui::egui::{self, Align2, FontId, Pos2, Rect, Shape, Stroke, Vec2};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::probe::Sample;
 use crate::ui::style::{BORDER, MUTED_TEXT};
@@ -57,13 +57,19 @@ pub(super) struct SceneProjection {
 }
 
 impl SceneProjection {
-    pub(super) fn new(rect: Rect, camera: &OrbitCamera, params: &BlackHoleParams) -> Self {
+    pub(super) fn new(
+        rect: Rect,
+        camera: &OrbitCamera,
+        params: &BlackHoleParams,
+        framing: SceneFraming,
+    ) -> Self {
+        let camera = framing.camera(camera);
         let (eye, forward, right, up) = camera.basis();
         let aspect = rect.width().max(1.0) / rect.height().max(1.0);
         // Invert the shader's ray generator, including the portrait FOV.
         let focal_pixels = rect.height() * 0.5 / (0.5 * camera.vertical_fov(aspect)).tan();
         Self {
-            center: rect.center(),
+            center: rect.center() + Vec2::new(framing.offset.x, framing.offset.y) * rect.size(),
             eye,
             forward,
             right,

@@ -1,6 +1,6 @@
 use bevy_egui::egui::{self, Color32, Painter, Pos2, Sense, Stroke, Ui, Vec2};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::stellar::{Experiment, HORIZON, Outcome, Pass, Sample};
 use crate::ui::style::{EXTREME_BG, MUTED_TEXT};
@@ -95,12 +95,13 @@ pub(super) fn scene(
     params: &BlackHoleParams,
     settings: &Settings,
     experiment: &Experiment,
+    framing: SceneFraming,
 ) {
-    let rect = ctx.content_rect();
+    let rect = ctx.viewport_rect();
     let painter = ctx
         .layer_painter(egui::LayerId::background())
         .with_clip_rect(rect);
-    let projection = SceneProjection::new(rect, camera, params);
+    let projection = SceneProjection::new(rect, camera, params, framing);
     draw_passes(&painter, settings, experiment, |sample| {
         projection.project(sample)
     });

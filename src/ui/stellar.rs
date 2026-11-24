@@ -4,7 +4,7 @@ mod view;
 
 use bevy_egui::egui::{self, Align, Align2, Button, Color32, Layout, RichText, Ui};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::stellar::{CRITICAL_RADIUS, Experiment, Input, Outcome, Pass};
 use crate::ui::sections::slider;
@@ -154,6 +154,8 @@ impl Default for Experiments {
 pub(super) struct StellarLab {
     open: bool,
     experiments: Option<Experiments>,
+    fit_pending: bool,
+    distance_scale: f32,
 }
 
 impl StellarLab {
@@ -171,6 +173,7 @@ impl StellarLab {
         {
             self.experiments.get_or_insert_with(Experiments::default);
             self.open = true;
+            self.fit_pending = true;
         }
     }
 
@@ -179,6 +182,7 @@ impl StellarLab {
         ctx: &egui::Context,
         camera: &OrbitCamera,
         params: &BlackHoleParams,
+        framing: &mut SceneFraming,
     ) -> egui::Rect {
         let Some(lab) = &mut self.experiments else {
             return egui::Rect::NOTHING;
@@ -210,7 +214,7 @@ impl StellarLab {
                 panel_frame(16)
                     .inner_margin(egui::Margin::same(11))
                     .show(ui, |ui| {
-                        let close = header(ui, settings, compact);
+                        let close = header(ui, settings, compact, &mut self.fit_pending);
                         self.open &= !close;
                         if settings.mode == Mode::Custom {
                             custom_summary(ui, custom, settings);
@@ -265,21 +269,74 @@ impl StellarLab {
         {
             self.open = false;
         }
-        if self.open && (settings.overlay || compact && !settings.compact_map) {
+        let dt = ctx.input(|input| input.stable_dt);
+        if self.open {
             let experiment = match settings.mode {
                 Mode::Comparison => &*comparison,
                 Mode::Custom => &*custom,
             };
-            view::scene(ctx, camera, params, settings, experiment);
-        }
-        if !self.open {
+            let canvas = ctx.viewport_rect();
+            let region = scene_region(viewport, response.rect, compact);
+            if std::mem::take(&mut self.fit_pending) {
+                self.distance_scale = fit_distance(canvas, region, camera, params, experiment);
+            }
+            let offset =
+                (region.center() - canvas.center()) / canvas.size().max(egui::Vec2::splat(1.0));
+            framing.approach(
+                SceneFraming {
+                    offset: bevy::math::Vec2::new(offset.x, offset.y),
+                    distance_scale: self.distance_scale.max(1.0),
+                },
+                dt,
+            );
+            if settings.overlay || compact && !settings.compact_map {
+                view::scene(ctx, camera, params, settings, experiment, *framing);
+            }
+        } else {
             settings.replay.playing = false;
+            framing.approach(SceneFraming::default(), dt);
         }
         response.rect
     }
 }
 
-fn header(ui: &mut Ui, settings: &mut Settings, compact: bool) -> bool {
+fn scene_region(mut region: egui::Rect, panel: egui::Rect, compact: bool) -> egui::Rect {
+    const GAP: f32 = 16.0;
+    if compact {
+        region.max.y = (panel.top() - GAP).clamp(region.top(), region.bottom());
+    } else {
+        region.max.x = (panel.left() - GAP).clamp(region.left(), region.right());
+    }
+    region
+}
+
+fn fit_distance(
+    canvas: egui::Rect,
+    region: egui::Rect,
+    camera: &OrbitCamera,
+    params: &BlackHoleParams,
+    experiment: &Experiment,
+) -> f32 {
+    let inner_disk = (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0);
+    // Frame the inner disk and the local encounter. Distant custom passes
+    // remain available in the orbit map without making the black hole tiny.
+    let encounter = experiment
+        .passes
+        .iter()
+        .flat_map(|pass| [pass.events.encounter, pass.events.disruption])
+        .flatten()
+        .map(|sample| sample.radius as f32)
+        .fold(inner_disk, f32::max)
+        .min(12.0);
+    let aspect = canvas.width().max(1.0) / canvas.height().max(1.0);
+    let focal = canvas.height() * 0.5 / (camera.vertical_fov(aspect) * 0.5).tan();
+    let half_extent = (region.width().min(region.height()) * 0.45).max(1.0);
+    // Distance at which a sphere of this radius subtends the available angle.
+    let distance = encounter * params.rs * (focal / half_extent).hypot(1.0);
+    (distance / camera.distance).max(1.0)
+}
+
+fn header(ui: &mut Ui, settings: &mut Settings, compact: bool, fit_pending: &mut bool) -> bool {
     let close = ui
         .horizontal(|ui| {
             ui.heading("Feed a star");
@@ -309,6 +366,7 @@ fn header(ui: &mut Ui, settings: &mut Settings, compact: bool) -> bool {
                 settings.set_mode(mode);
             }
         }
+        *fit_pending |= ui.button("Fit scene").clicked();
     });
     close
 }
@@ -604,6 +662,7 @@ mod tests {
         let mut lab = StellarLab {
             open: true,
             experiments: Some(Experiments::default()),
+            ..Default::default()
         };
         for size in [egui::vec2(320.0, 560.0), egui::vec2(360.0, 680.0)] {
             let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -621,6 +680,7 @@ mod tests {
                                 &context,
                                 &OrbitCamera::default(),
                                 &BlackHoleParams::default(),
+                                &mut SceneFraming::default(),
                             );
                             assert!(
                                 viewport.contains_rect(panel),

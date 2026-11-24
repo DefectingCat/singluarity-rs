@@ -9,7 +9,7 @@ mod trajectory;
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Align2, Button, Layout, RichText, Ui};
 
-use crate::camera::{OrbitCamera, OrbitInteraction, UiPointerActivity, WantsPointer};
+use crate::camera::{OrbitCamera, OrbitInteraction, SceneFraming, UiPointerActivity, WantsPointer};
 use crate::params::BlackHoleParams;
 use crate::scene::planets::PlanetSystemDirty;
 use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
@@ -74,6 +74,7 @@ pub fn ui_system(
     mut params: ResMut<BlackHoleParams>,
     mut camera: ResMut<OrbitCamera>,
     mut orbit: ResMut<OrbitInteraction>,
+    mut framing: ResMut<SceneFraming>,
     mut wants: ResMut<WantsPointer>,
     mut ui_activity: ResMut<UiPointerActivity>,
     mut planet_dirty: ResMut<PlanetSystemDirty>,
@@ -82,11 +83,21 @@ pub fn ui_system(
     let Ok(ctx) = contexts.ctx_mut() else {
         wants.0 = false;
         ui_activity.0 = false;
+        *framing = SceneFraming::default();
         return;
     };
 
     let planets_before = planet_configuration(&params);
-    let rect = controls.show(ctx, &mut params, &mut camera, &mut orbit);
+    let rect = if controls.stellar.is_open() {
+        controls.stellar.show(ctx, &camera, &params, &mut framing)
+    } else {
+        if controls.probe.is_open() {
+            *framing = SceneFraming::default();
+        } else {
+            framing.approach(SceneFraming::default(), ctx.input(|input| input.stable_dt));
+        }
+        controls.show(ctx, &mut params, &mut camera, &mut orbit)
+    };
     if planets_before != planet_configuration(&params) {
         planet_dirty.0 = true;
     }
@@ -125,9 +136,6 @@ impl Controls {
     ) -> egui::Rect {
         if self.probe.is_open() {
             return self.probe.show(ctx, camera, params);
-        }
-        if self.stellar.is_open() {
-            return self.stellar.show(ctx, camera, params);
         }
         if !ctx.text_edit_focused() {
             let tab_available = !ctx.egui_wants_keyboard_input();

@@ -71,8 +71,7 @@ pub struct BlackHoleUniforms {
     pub jets_strength: f32,
     // Base ray count for ring antialiasing. The shader adapts it to the pixel's position.
     pub aa_samples: u32,
-    pub _pad6: f32,
-    pub _pad7: f32,
+    pub screen_offset: Vec2,
     pub disk_clumps: [DiskClump; MAX_DISK_CLUMPS],
 }
 
@@ -125,8 +124,7 @@ impl Default for BlackHoleUniforms {
             jets_enabled: 0,
             jets_strength: 1.0,
             aa_samples: 1, // overridden by params.aa_quality each frame
-            _pad6: 0.0,
-            _pad7: 0.0,
+            screen_offset: Vec2::ZERO,
             disk_clumps: [DiskClump::default(); MAX_DISK_CLUMPS],
         }
     }

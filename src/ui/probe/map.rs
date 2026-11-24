@@ -198,7 +198,7 @@ pub(super) fn draw_scene(
     let painter = ctx
         .layer_painter(egui::LayerId::background())
         .with_clip_rect(rect);
-    let projection = SceneProjection::new(rect, camera, params);
+    let projection = SceneProjection::new(rect, camera, params, Default::default());
     for (run, color) in visible_runs(runs) {
         draw_track(&painter, run, color, time, |sample| {
             projection.project(sample)
@@ -305,7 +305,12 @@ mod tests {
 
     #[test]
     fn scene_projection_matches_pixel_rays_in_landscape_and_portrait() {
-        for size in [Vec2::new(1100.0, 700.0), Vec2::new(320.0, 680.0)] {
+        use crate::camera::SceneFraming;
+
+        for (size, offset) in [
+            (Vec2::new(1100.0, 700.0), bevy::math::Vec2::new(-0.2, 0.0)),
+            (Vec2::new(320.0, 680.0), bevy::math::Vec2::new(0.0, -0.2)),
+        ] {
             let camera = OrbitCamera::default();
             let params = BlackHoleParams {
                 disk_tilt: 0.2,
@@ -313,7 +318,11 @@ mod tests {
                 ..Default::default()
             };
             let rect = Rect::from_min_size(Pos2::new(2.0, 3.0), size);
-            let projection = SceneProjection::new(rect, &camera, &params);
+            let framing = SceneFraming {
+                offset,
+                distance_scale: 1.3,
+            };
+            let projection = SceneProjection::new(rect, &camera, &params, framing);
             let sample = Sample {
                 radius: 5.0,
                 azimuth: f64::from(TAU) * 0.125,
@@ -321,10 +330,10 @@ mod tests {
                 proper_time: None,
             };
             let pos = projection.project(sample).unwrap();
-            let uv = 2.0 * (pos - rect.min) / rect.size();
+            let uv = 2.0 * ((pos - rect.min) / rect.size() - Vec2::new(offset.x, offset.y));
             let aspect = rect.width() / rect.height();
             let tan = (0.5 * camera.vertical_fov(aspect)).tan();
-            let (eye, forward, right, up) = camera.basis();
+            let (eye, forward, right, up) = framing.camera(&camera).basis();
             let direction =
                 (forward + right * ((uv.x - 1.0) * aspect * tan) + up * ((1.0 - uv.y) * tan))
                     .normalize();
@@ -342,6 +351,7 @@ mod tests {
             Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0)),
             &OrbitCamera::default(),
             &BlackHoleParams::default(),
+            Default::default(),
         );
         let behind = Sample {
             radius: 40.0,

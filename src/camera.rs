@@ -30,6 +30,48 @@ impl Default for OrbitCamera {
     }
 }
 
+/// View-only framing shared by the ray shader and the scene overlays.
+#[derive(Resource, Clone, Copy)]
+pub struct SceneFraming {
+    /// Offset from the viewport center in fractions of its size, with Y down.
+    pub(crate) offset: Vec2,
+    pub(crate) distance_scale: f32,
+}
+
+impl Default for SceneFraming {
+    fn default() -> Self {
+        Self {
+            offset: Vec2::ZERO,
+            distance_scale: 1.0,
+        }
+    }
+}
+
+impl SceneFraming {
+    pub(crate) fn camera(self, camera: &OrbitCamera) -> OrbitCamera {
+        OrbitCamera {
+            distance: (camera.distance * self.distance_scale).min(500.0),
+            ..*camera
+        }
+    }
+
+    pub(crate) fn approach(&mut self, target: Self, dt: f32) {
+        let remaining = (-16.0 * dt).exp();
+        let offset_delta = (self.offset - target.offset) * remaining;
+        let scale_delta = (self.distance_scale - target.distance_scale) * remaining;
+        self.offset = if offset_delta.length_squared() < 0.00025f32.powi(2) {
+            target.offset
+        } else {
+            target.offset + offset_delta
+        };
+        self.distance_scale = if scale_delta.abs() < 0.001 {
+            target.distance_scale
+        } else {
+            target.distance_scale + scale_delta
+        };
+    }
+}
+
 const AUTO_ORBIT_PERIOD: f32 = 45.0;
 const AUTO_ORBIT_IDLE_DELAY: f32 = 1.5;
 const MAX_PITCH: f32 = PI - 0.05;

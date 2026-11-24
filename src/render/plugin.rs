@@ -115,6 +115,7 @@ impl Plugin for BlackHolePlugin {
                     .load_collection::<ShaderAssets>(),
             )
             .init_resource::<crate::camera::OrbitCamera>()
+            .init_resource::<crate::camera::SceneFraming>()
             .init_resource::<crate::camera::OrbitInteraction>()
             .init_resource::<crate::camera::UiPointerActivity>()
             .init_resource::<crate::camera::WantsPointer>()
@@ -674,6 +675,7 @@ fn rebuild_bloom(
 #[allow(clippy::too_many_arguments)]
 fn mirror_params(
     camera: Res<crate::camera::OrbitCamera>,
+    framing: Res<crate::camera::SceneFraming>,
     params: Res<crate::params::BlackHoleParams>,
     time: Res<Time>,
     mut disk_time: Local<f64>,
@@ -687,6 +689,7 @@ fn mirror_params(
         Err(_) => return,
     };
     let resolution = win.size().max(Vec2::ONE);
+    let camera = framing.camera(&camera);
     let (eye, forward, right, up) = camera.basis();
     // Integrate the rate so slowing or pausing the flow never resets its phase.
     *disk_time += time.delta_secs_f64() * f64::from(params.disk_rotation_speed.max(0.0));
@@ -701,6 +704,7 @@ fn mirror_params(
         u.up = up;
         u.fov = camera.vertical_fov(resolution.x / resolution.y);
         u.resolution = resolution;
+        u.screen_offset = framing.offset;
         u.time = time.elapsed_secs();
         u.rs = params.rs;
         // disk_inner is spin-derived (Kerr ISCO); the params.disk_inner field is ignored.
