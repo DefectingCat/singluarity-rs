@@ -57,6 +57,13 @@ Create a separate Git commit for each feature as soon as it is complete.
 - Treat comments about alignment/bindings, camera order/render layers, stable handles, and Bevy workarounds as invariants. Keep the main shader’s ray integration and shading logic in one WESL file.
 - Camera sliders bound to auto-mutated `OrbitCamera` fields must use `SliderClamping::Edits`; default writeback can round values and stall auto-orbit (`CONTEXT.md`).
 
+## Control Panels
+
+- Use the shared layout and animations in `src/ui/lab.rs` when adding or changing a control panel. Keep the scene full-screen, use a right sidebar at desktop widths, and use a collapsible bottom drawer at narrow widths. Keep experiment playback independently accessible at the bottom.
+- Animate opening, closing, tab and view changes, camera reframing, and discrete map and playback changes. Keep drag, orbit, and scrub interactions directly under the pointer.
+- Frame the scene inside the space left by visible controls. Ease back to the window center when controls close. Share `SceneFraming` with every scene overlay so markers and trajectories stay aligned with the shader. Fit the scene on entry or explicit request and keep the camera scale stable during playback.
+- Verify desktop and narrow layouts, input capture, and an intermediate animation frame when modifying a control panel.
+
 ## Important Files
 
 - `src/main.rs`: native/wasm entry point and platform setup.

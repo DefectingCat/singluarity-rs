@@ -4,13 +4,15 @@ mod map;
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use bevy_egui::egui::{self, Align, Align2, Button, Color32, Layout, RichText, Ui};
+use bevy_egui::egui::{self, Align, Button, Color32, Layout, RichText, Ui};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::probe::{IntegrationError, Launch, Outcome, ProbeKind, Trajectory, integrate};
-use crate::ui::style::{ACCENT, MUTED_TEXT, PANEL_FILL, panel_frame};
+use crate::ui::style::{ACCENT, MUTED_TEXT, PANEL_FILL};
 use crate::ui::trajectory::clock;
+
+use super::lab::{LabLayout, TimeJump, content_opacity, fit_distance, frame_scene, reveal};
 
 const RUN_STYLES: [(char, Color32); 6] = [
     ('A', ACCENT),
@@ -104,9 +106,17 @@ struct Run {
     visible: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Panel {
+    Desktop,
+    Controls,
+    Map,
+}
+
 #[derive(Default)]
 pub(super) struct ProbeLab {
     open: bool,
+    reveal: f32,
     initialized: bool,
     draft: Launch,
     preset: Option<Experiment>,
@@ -114,14 +124,21 @@ pub(super) struct ProbeLab {
     error: Option<IntegrationError>,
     time: f64,
     playing: bool,
+    jump: Option<TimeJump>,
     rate: usize,
     scene: bool,
     map: map::Map,
+    desktop_hidden: bool,
+    compact_panel: Option<Panel>,
+    last_panel: Option<Panel>,
+    fit_pending: bool,
+    distance_scale: f32,
+    content_changed_at: Option<f64>,
 }
 
 impl ProbeLab {
-    pub(super) fn is_open(&self) -> bool {
-        self.open
+    pub(super) fn is_active(&self) -> bool {
+        self.open || self.reveal > 0.0
     }
 
     pub(super) fn launcher(&mut self, ui: &mut Ui, size: [f32; 2]) {
@@ -132,10 +149,15 @@ impl ProbeLab {
             )
             .clicked()
         {
+            reveal(ui.ctx(), "probe_open", false);
+            reveal(ui.ctx(), "probe_panel", false);
+            reveal(ui.ctx(), "probe_overlay", false);
             self.open = true;
+            self.fit_pending = true;
             if !self.initialized {
                 self.load(Experiment::Capture);
                 self.rate = 2;
+                self.scene = true;
                 self.initialized = true;
             }
         }
@@ -156,6 +178,7 @@ impl ProbeLab {
         self.preset = None;
         self.time = 0.0;
         self.playing = false;
+        self.jump = None;
         self.error = None;
     }
 
@@ -173,6 +196,7 @@ impl ProbeLab {
                 self.preset = None;
                 self.time = 0.0;
                 self.playing = false;
+                self.jump = None;
                 true
             }
             Err(error) => {
@@ -190,13 +214,19 @@ impl ProbeLab {
             .fold(0.0, f64::max)
     }
 
-    fn update_playback(&mut self, ctx: &egui::Context) {
+    fn update_playback(&mut self, dt: f64) {
         let duration = self.duration();
         self.time = self.time.min(duration);
+        if let Some(jump) = &mut self.jump {
+            if jump.advance(dt, &mut self.time) {
+                self.jump = None;
+            }
+            return;
+        }
         if self.playing {
             // Give each comparison a readable playback length, regardless of its simulation span.
-            let dt = f64::from(ctx.input(|input| input.stable_dt)).min(0.1);
-            self.time = (self.time + dt * duration / 16.0 * RATES[self.rate].0).min(duration);
+            self.time =
+                (self.time + dt.min(0.1) * duration / 16.0 * RATES[self.rate].0).min(duration);
             self.playing = self.time < duration;
         }
     }
@@ -206,109 +236,245 @@ impl ProbeLab {
         ctx: &egui::Context,
         camera: &OrbitCamera,
         params: &BlackHoleParams,
-    ) -> egui::Rect {
-        let viewport = ctx.content_rect();
-        let compact = viewport.width() <= 720.0;
-        let inset = if compact { 12.0 } else { 20.0 };
-        let width = (viewport.width() - 2.0 * inset).clamp(0.0, 375.0);
-        let max_height = if compact {
-            viewport.height() * if self.scene { 0.40 } else { 0.72 }
-        } else {
-            viewport.height() - 2.0 * inset
-        };
-        let (anchor, y) = if compact {
-            (Align2::RIGHT_BOTTOM, -inset)
-        } else {
-            (Align2::RIGHT_TOP, inset)
-        };
-        self.update_playback(ctx);
+        framing: &mut SceneFraming,
+    ) -> [egui::Rect; 3] {
+        let layout = LabLayout::new(ctx);
+        let compact = layout.compact;
+        if self.open && !ctx.text_edit_focused() && !ctx.any_popup_open() {
+            ctx.input_mut(|input| {
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    self.open = false;
+                } else if input.consume_key(egui::Modifiers::NONE, egui::Key::H) {
+                    self.toggle_controls(compact);
+                }
+            });
+        }
 
-        let response = egui::Area::new(egui::Id::new("probe_lab"))
-            .anchor(anchor, egui::vec2(-inset, y))
-            .default_size(egui::vec2(width, max_height))
-            .fade_in(false)
-            .show(ctx, |ui| {
-                ui.set_width(width);
-                panel_frame(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    self.header(ui);
-                    let before = self.draft;
-                    if self.scene {
-                        ui.label(RichText::new("Coordinate paths over the current scene. Drag the scene to orbit.").small().color(MUTED_TEXT));
-                    } else {
-                        let height = (max_height * 0.38).clamp(65.0, 230.0);
-                        self.map.show(ui, height, &mut self.draft, &self.runs, self.time, self.preset == Some(Experiment::Precession));
-                    }
-                    if self.draft != before {
-                        self.error = None;
-                    }
-                    self.replay(ui);
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .id_salt("probe_settings")
-                        .auto_shrink([false, true])
-                        .max_height((max_height - ui.min_size().y - 24.0).max(28.0))
-                        .show(ui, |ui| {
-                            self.readings(ui);
-                            ui.separator();
-                            self.launch_settings(ui);
-                        });
+        self.reveal = reveal(ctx, "probe_open", self.open);
+        let dt = ctx.input(|input| input.stable_dt);
+        if !self.open && self.reveal <= 0.0 {
+            framing.approach(SceneFraming::default(), dt);
+            return [egui::Rect::NOTHING; 3];
+        }
+
+        let toolbar = layout.toolbar(ctx, "probe_toolbar", self.reveal, self.open, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong(if compact {
+                    "Probe lab"
+                } else {
+                    "Probe experiments"
                 });
-            }).response;
-
-        if self.scene && self.open {
-            map::draw_scene(ctx, camera, params, &self.runs, self.time);
-        }
-        if !ctx.text_edit_focused()
-            && !ctx.any_popup_open()
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.open = false;
-        }
-        if !self.open {
-            self.playing = false;
-            self.map.end_drag();
-        }
-        response.rect
-    }
-
-    fn header(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Probe experiments");
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .button("Close")
-                    .on_hover_text("Close probe experiments (Esc)")
+                if compact {
+                    let controls = self.compact_panel == Some(Panel::Controls);
+                    if ui
+                        .selectable_label(controls, choice("Controls", controls))
+                        .clicked()
+                    {
+                        self.toggle_controls(compact);
+                    }
+                    let map = self.compact_panel == Some(Panel::Map);
+                    if ui.selectable_label(map, choice("Orbit map", map)).clicked() {
+                        self.compact_panel = (!map).then_some(Panel::Map);
+                    }
+                } else if ui
+                    .button(if self.desktop_hidden {
+                        "Show controls"
+                    } else {
+                        "Hide controls"
+                    })
+                    .on_hover_text("Toggle experiment controls (H)")
                     .clicked()
                 {
+                    self.toggle_controls(compact);
+                }
+                if ui.button("Close").on_hover_text("Close (Esc)").clicked() {
                     self.open = false;
                 }
             });
         });
-        ui.horizontal_wrapped(|ui| {
-            let mut selection = None;
-            egui::ComboBox::from_id_salt("experiment")
-                .selected_text(self.preset.map_or("Custom experiment", Experiment::name))
-                .width(132.0)
-                .show_ui(ui, |ui| {
-                    for experiment in Experiment::ALL {
-                        if ui
-                            .selectable_label(
-                                self.preset == Some(experiment),
-                                choice(experiment.name(), self.preset == Some(experiment)),
-                            )
-                            .clicked()
-                        {
-                            selection = Some(experiment);
-                        }
-                    }
-                });
-            if let Some(experiment) = selection {
-                self.load(experiment);
+        let requested_panel = if compact {
+            self.compact_panel
+        } else {
+            (!self.desktop_hidden).then_some(Panel::Desktop)
+        };
+        let panel_open = self.open && requested_panel.is_some();
+        let panel_reveal = reveal(ctx, "probe_panel", panel_open);
+        let now = ctx.input(|input| input.time);
+        if let Some(panel) = requested_panel
+            && self.last_panel != Some(panel)
+        {
+            if self.last_panel.is_some() && panel_reveal >= 1.0 {
+                self.content_changed_at = Some(now);
             }
-            let scene = self.scene;
-            ui.selectable_value(&mut self.scene, false, choice("Map", !scene));
-            ui.selectable_value(&mut self.scene, true, choice("Scene", scene));
+            self.last_panel = Some(panel);
+        }
+        if !self.open {
+            self.playing = false;
+            self.jump = None;
+        } else if ctx.current_pass_index() == 0 {
+            self.update_playback(f64::from(dt));
+        }
+        if !panel_open || requested_panel == Some(Panel::Controls) {
+            self.map.end_drag();
+        }
+
+        let transport = layout.transport(ctx, "probe_transport", self.reveal, self.open, |ui| {
+            self.replay(ui);
         });
+        let mut panel_bounds = egui::Rect::NOTHING;
+        let mut settled_panel = None;
+        if let Some(panel) = self.last_panel
+            && panel_reveal > 0.0
+        {
+            let surface = layout.inspector(
+                ctx,
+                "probe_inspector",
+                &toolbar,
+                Some(&transport),
+                panel_reveal,
+                self.reveal,
+                panel_open,
+                |ui, height| self.inspector(ui, height, panel),
+            );
+            panel_bounds = surface.rect;
+            settled_panel = panel_open.then_some(surface.settled);
+        }
+        let canvas = ctx.viewport_rect();
+        let region = layout.scene_region(&toolbar, Some(&transport), settled_panel);
+        let target = if self.open {
+            let center = if settled_panel.is_some() {
+                region.center()
+            } else {
+                canvas.center()
+            };
+            if self.fit_pending && (!panel_open || settled_panel.is_some()) {
+                self.fit_pending = false;
+                let inner_disk = (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0);
+                let radius = self
+                    .runs
+                    .iter()
+                    .flatten()
+                    .filter(|run| run.visible)
+                    .map(|run| run.path.launch().radius as f32)
+                    .fold(inner_disk, f32::max)
+                    .min(12.0)
+                    * params.rs;
+                self.distance_scale = fit_distance(canvas, region, center, camera, radius);
+            }
+            frame_scene(canvas, center, self.distance_scale)
+        } else {
+            SceneFraming::default()
+        };
+        if ctx.current_pass_index() == 0 {
+            framing.approach(target, dt);
+        }
+        let overlay = reveal(ctx, "probe_overlay", self.open && self.scene)
+            * content_opacity(now, self.content_changed_at);
+        if overlay > 0.0 {
+            map::draw_scene(
+                ctx, camera, params, &self.runs, self.time, *framing, overlay,
+            );
+        }
+        if self.open {
+            [
+                toolbar.rect,
+                transport.rect,
+                if panel_open {
+                    panel_bounds
+                } else {
+                    egui::Rect::NOTHING
+                },
+            ]
+        } else {
+            [egui::Rect::NOTHING; 3]
+        }
+    }
+
+    fn toggle_controls(&mut self, compact: bool) {
+        if compact {
+            self.compact_panel =
+                (self.compact_panel != Some(Panel::Controls)).then_some(Panel::Controls);
+        } else {
+            self.desktop_hidden ^= true;
+        }
+    }
+
+    fn inspector(&mut self, ui: &mut Ui, height: f32, panel: Panel) {
+        let now = ui.input(|input| input.time);
+        let opacity = content_opacity(now, self.content_changed_at);
+        ui.multiply_opacity(opacity);
+        if opacity < 1.0 {
+            ui.ctx().request_repaint();
+        }
+        if panel != Panel::Map {
+            self.experiment_selector(ui);
+        }
+        ui.checkbox(&mut self.scene, "Scene overlay")
+            .on_hover_text("Project the paths over the current scene");
+        if panel != Panel::Controls {
+            let before = self.draft;
+            let map_height =
+                (height * if panel == Panel::Map { 0.61 } else { 0.36 }).clamp(45.0, 210.0);
+            self.map.show(
+                ui,
+                map_height,
+                &mut self.draft,
+                &self.runs,
+                self.time,
+                self.preset == Some(Experiment::Precession),
+            );
+            if self.draft != before {
+                self.error = None;
+            }
+        }
+        if panel != Panel::Map {
+            ui.separator();
+            let before = self.run_revision();
+            egui::ScrollArea::vertical()
+                .id_salt("probe_settings")
+                .auto_shrink([false, true])
+                .max_height((height - ui.min_size().y - 22.0).max(22.0))
+                .show(ui, |ui| {
+                    self.launch_settings(ui);
+                    ui.separator();
+                    self.readings(ui);
+                });
+            if self.run_revision() != before {
+                self.content_changed_at = Some(now);
+            }
+        }
+    }
+
+    fn run_revision(&self) -> [Option<Launch>; RUN_STYLES.len()] {
+        self.runs
+            .each_ref()
+            .map(|slot| slot.as_ref().map(|run| run.path.launch()))
+    }
+
+    fn experiment_selector(&mut self, ui: &mut Ui) {
+        let mut selection = None;
+        egui::ComboBox::from_id_salt("experiment")
+            .selected_text(self.preset.map_or("Custom experiment", Experiment::name))
+            .width(132.0)
+            .show_ui(ui, |ui| {
+                for experiment in Experiment::ALL {
+                    if ui
+                        .selectable_label(
+                            self.preset == Some(experiment),
+                            choice(experiment.name(), self.preset == Some(experiment)),
+                        )
+                        .clicked()
+                    {
+                        selection = Some(experiment);
+                    }
+                }
+            });
+        if let Some(experiment) = selection
+            && self.preset != Some(experiment)
+        {
+            self.load(experiment);
+            self.content_changed_at = Some(ui.input(|input| input.time));
+        }
         if let Some(preset) = self.preset {
             ui.label(
                 RichText::new(preset.explanation())
@@ -320,33 +486,48 @@ impl ProbeLab {
 
     fn replay(&mut self, ui: &mut Ui) {
         let duration = self.duration();
-        ui.horizontal_wrapped(|ui| {
+        let controls = |ui: &mut Ui, lab: &mut Self| {
             ui.add_enabled_ui(duration > 0.0, |ui| {
                 if ui
-                    .button(if self.playing { "Pause" } else { "Play" })
+                    .button(if lab.playing { "Pause" } else { "Play" })
                     .clicked()
                 {
-                    if self.time >= duration {
-                        self.time = 0.0;
+                    if lab.time >= duration && lab.jump.is_none() {
+                        lab.jump = TimeJump::new(lab.time, 0.0);
+                        lab.playing = true;
+                    } else {
+                        lab.playing = !lab.playing;
                     }
-                    self.playing = !self.playing;
                 }
                 if ui.button("Rewind").clicked() {
-                    self.time = 0.0;
-                    self.playing = false;
+                    lab.jump = TimeJump::new(lab.time, 0.0);
+                    lab.playing = false;
                 }
             });
             egui::ComboBox::from_id_salt("probe_rate")
                 .width(42.0)
-                .selected_text(RATES[self.rate].1)
+                .selected_text(RATES[lab.rate].1)
                 .show_ui(ui, |ui| {
                     for (index, (_, label)) in RATES.iter().enumerate() {
-                        let selected = self.rate == index;
-                        ui.selectable_value(&mut self.rate, index, choice(label, selected));
+                        let selected = lab.rate == index;
+                        ui.selectable_value(&mut lab.rate, index, choice(label, selected));
                     }
                 });
-            ui.label(RichText::new(format!("{:.1} r_s/c", self.time)).monospace());
-        });
+            ui.label(RichText::new(format!("{:.1} r_s/c", lab.time)).monospace());
+            lab.fit_pending |= ui.button("Fit scene").clicked();
+        };
+        if ui.available_width() > 600.0 {
+            ui.horizontal(|ui| {
+                controls(ui, self);
+                self.timeline(ui, duration);
+            });
+        } else {
+            ui.horizontal_wrapped(|ui| controls(ui, self));
+            self.timeline(ui, duration);
+        }
+    }
+
+    fn timeline(&mut self, ui: &mut Ui, duration: f64) {
         ui.scope(|ui| {
             ui.spacing_mut().slider_width = ui.available_width();
             let response = ui
@@ -359,6 +540,7 @@ impl ProbeLab {
                 .on_hover_text("Shared coordinate time");
             if response.changed() {
                 self.playing = false;
+                self.jump = None;
             }
         });
     }
@@ -617,5 +799,49 @@ mod tests {
         let in_flight = captured.at(1.23);
         assert!((in_flight.coordinate_time - 1.23).abs() < f64::EPSILON);
         assert!(in_flight.radius < captured.launch().radius && in_flight.radius > last.radius);
+    }
+
+    #[test]
+    fn narrow_probe_drawer_leaves_the_transport_and_scene_visible() {
+        let ctx = egui::Context::default();
+        crate::ui::style::setup(&ctx);
+        let mut lab = ProbeLab {
+            open: true,
+            scene: true,
+            ..Default::default()
+        };
+        lab.load(Experiment::Capture);
+        let camera = OrbitCamera::default();
+        let params = BlackHoleParams::default();
+        let mut framing = SceneFraming::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 560.0));
+        let mut time = 0.0;
+        let mut frame = |lab: &mut ProbeLab| {
+            let mut bounds = [egui::Rect::NOTHING; 3];
+            for _ in 0..28 {
+                time += 1.0 / 60.0;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        time: Some(time),
+                        screen_rect: Some(viewport),
+                        ..Default::default()
+                    },
+                    |_| bounds = lab.show(&ctx, &camera, &params, &mut framing),
+                );
+                output.textures_delta.clear();
+            }
+            (bounds, framing.offset)
+        };
+        let ([toolbar, transport, panel], offset) = frame(&mut lab);
+        assert!(viewport.contains_rect(toolbar));
+        assert!(viewport.contains_rect(transport));
+        assert!(!panel.is_positive());
+        assert_eq!(offset, bevy::math::Vec2::ZERO);
+
+        lab.compact_panel = Some(Panel::Map);
+        let ([_, transport, panel], offset) = frame(&mut lab);
+        assert!(viewport.contains_rect(panel));
+        assert!(panel.bottom() < transport.top());
+        assert!(offset.y < -0.12);
     }
 }

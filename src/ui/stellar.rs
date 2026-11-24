@@ -2,16 +2,16 @@
 
 mod view;
 
-use bevy_egui::egui::{self, Align, Align2, Button, Color32, Layout, RichText, Ui};
+use bevy_egui::egui::{self, Align, Button, Color32, Layout, RichText, Ui};
 
 use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::stellar::{CRITICAL_RADIUS, Experiment, Input, Outcome, Pass};
 use crate::ui::sections::slider;
-use crate::ui::style::{ACCENT, MUTED_TEXT, PANEL_FILL, panel_frame};
+use crate::ui::style::{ACCENT, MUTED_TEXT, PANEL_FILL};
 use crate::ui::trajectory::clock;
 
-const TRANSITION_SECONDS: f32 = 0.24;
+use super::lab::{LabLayout, TimeJump, content_opacity, fit_distance, frame_scene, reveal};
 const COLORS: [Color32; 4] = [
     Color32::from_rgb(108, 193, 249),
     Color32::from_rgb(130, 223, 159),
@@ -52,12 +52,6 @@ struct Playback {
     jump: Option<TimeJump>,
 }
 
-struct TimeJump {
-    from: f64,
-    to: f64,
-    elapsed: f64,
-}
-
 impl Default for Playback {
     fn default() -> Self {
         Self {
@@ -72,11 +66,7 @@ impl Default for Playback {
 impl Playback {
     fn advance(&mut self, dt: f64, duration: f64) {
         if let Some(jump) = &mut self.jump {
-            jump.elapsed += dt;
-            let t = (jump.elapsed / f64::from(TRANSITION_SECONDS)).min(1.0);
-            self.time = jump.from + (jump.to - jump.from) * (t * t * (3.0 - 2.0 * t));
-            if t >= 1.0 {
-                self.time = jump.to;
+            if jump.advance(dt, &mut self.time) {
                 self.jump = None;
             }
             return;
@@ -96,11 +86,7 @@ impl Playback {
 
     fn jump_to(&mut self, time: f64, play_after: bool) {
         self.playing = play_after;
-        self.jump = (self.time != time).then_some(TimeJump {
-            from: self.time,
-            to: time,
-            elapsed: 0.0,
-        });
+        self.jump = TimeJump::new(self.time, time);
     }
 }
 
@@ -197,11 +183,6 @@ enum Panel {
     Map,
 }
 
-fn reveal(ctx: &egui::Context, id: &'static str, shown: bool) -> f32 {
-    let t = ctx.animate_bool_with_time(egui::Id::new(id), shown, TRANSITION_SECONDS);
-    t * t * (3.0 - 2.0 * t)
-}
-
 impl StellarLab {
     pub(super) fn is_active(&self) -> bool {
         self.open || self.reveal > 0.0
@@ -231,9 +212,8 @@ impl StellarLab {
         params: &BlackHoleParams,
         framing: &mut SceneFraming,
     ) -> [egui::Rect; 3] {
-        let viewport = ctx.content_rect();
-        let compact = viewport.width() <= 700.0;
-        let inset = if compact { 8.0 } else { 16.0 };
+        let layout = LabLayout::new(ctx);
+        let compact = layout.compact;
         if self.open && !ctx.text_edit_focused() && !ctx.any_popup_open() {
             ctx.input_mut(|input| {
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
@@ -253,50 +233,34 @@ impl StellarLab {
             }
         }
 
-        let toolbar_slide = egui::vec2(0.0, -24.0 * (1.0 - self.reveal));
-        let toolbar = egui::Area::new(egui::Id::new("stellar_toolbar"))
-            .pivot(Align2::RIGHT_TOP)
-            .fixed_pos(viewport.right_top() + egui::vec2(-inset, inset) + toolbar_slide)
-            .constrain(false)
-            .fade_in(false)
-            .interactable(self.open)
-            .show(ctx, |ui| {
-                ui.set_clip_rect(viewport);
-                ui.multiply_opacity(self.reveal);
-                panel_frame(9).inner_margin(7).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Feed a star");
-                        if compact {
-                            if choice(ui, self.compact_panel == Some(Panel::Controls), "Controls")
-                                .clicked()
-                            {
-                                self.toggle_controls(compact);
-                            }
-                            if choice(ui, self.compact_panel == Some(Panel::Map), "Orbit map")
-                                .clicked()
-                            {
-                                self.compact_panel =
-                                    (self.compact_panel != Some(Panel::Map)).then_some(Panel::Map);
-                            }
-                        } else if ui
-                            .button(if self.desktop_hidden {
-                                "Show controls"
-                            } else {
-                                "Hide controls"
-                            })
-                            .on_hover_text("Toggle experiment controls (H)")
-                            .clicked()
-                        {
-                            self.toggle_controls(compact);
-                        }
-                        if ui.button("Close").on_hover_text("Close (Esc)").clicked() {
-                            self.open = false;
-                        }
-                    });
-                });
-            })
-            .response
-            .rect;
+        let toolbar = layout.toolbar(ctx, "stellar_toolbar", self.reveal, self.open, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Feed a star");
+                if compact {
+                    if choice(ui, self.compact_panel == Some(Panel::Controls), "Controls").clicked()
+                    {
+                        self.toggle_controls(compact);
+                    }
+                    if choice(ui, self.compact_panel == Some(Panel::Map), "Orbit map").clicked() {
+                        self.compact_panel =
+                            (self.compact_panel != Some(Panel::Map)).then_some(Panel::Map);
+                    }
+                } else if ui
+                    .button(if self.desktop_hidden {
+                        "Show controls"
+                    } else {
+                        "Hide controls"
+                    })
+                    .on_hover_text("Toggle experiment controls (H)")
+                    .clicked()
+                {
+                    self.toggle_controls(compact);
+                }
+                if ui.button("Close").on_hover_text("Close (Esc)").clicked() {
+                    self.open = false;
+                }
+            });
+        });
 
         let requested_panel = if compact {
             self.compact_panel
@@ -331,83 +295,38 @@ impl StellarLab {
             settings.replay.seek(settings.replay.time);
         }
 
-        let transport_slide = egui::vec2(0.0, 32.0 * (1.0 - self.reveal));
-        let transport_width = (viewport.width() - 2.0 * inset).max(0.0);
-        let transport = egui::Area::new(egui::Id::new("stellar_transport"))
-            .pivot(Align2::LEFT_BOTTOM)
-            .fixed_pos(viewport.left_bottom() + egui::vec2(inset, -inset) + transport_slide)
-            .default_size(egui::vec2(transport_width, 82.0))
-            .constrain(false)
-            .fade_in(false)
-            .interactable(self.open)
-            .show(ctx, |ui| {
-                ui.set_clip_rect(viewport);
-                ui.set_width(transport_width);
-                ui.multiply_opacity(self.reveal);
-                panel_frame(12).inner_margin(8).show(ui, |ui| {
-                    replay(ui, settings, experiment, &mut self.fit_pending);
-                });
-            })
-            .response
-            .rect;
+        let transport = layout.transport(ctx, "stellar_transport", self.reveal, self.open, |ui| {
+            replay(ui, settings, experiment, &mut self.fit_pending);
+        });
 
-        let top = toolbar.bottom() - toolbar_slide.y + 8.0;
-        let bottom = transport.top() - transport_slide.y - 8.0;
         let mut panel_bounds = egui::Rect::NOTHING;
         let mut settled_panel = None;
         if let Some(panel) = self.last_panel
             && panel_reveal > 0.0
         {
-            let width = transport_width.min(if compact { 480.0 } else { 376.0 });
-            let available_height = (bottom - top).max(0.0);
-            let (pivot, y, height, slide) = if compact {
-                (
-                    Align2::RIGHT_BOTTOM,
-                    bottom,
-                    (available_height * 0.55).min(370.0),
-                    egui::vec2(0.0, 26.0 * (1.0 - panel_reveal)),
-                )
-            } else {
-                (
-                    Align2::RIGHT_TOP,
-                    top,
-                    available_height,
-                    egui::vec2(28.0 * (1.0 - panel_reveal), 0.0),
-                )
-            };
-            let mut clip = viewport;
-            if compact {
-                clip.max.y = clip.max.y.min(transport.top() - 1.0);
-            }
-            panel_bounds = egui::Area::new(egui::Id::new("stellar_inspector"))
-                .pivot(pivot)
-                .fixed_pos(egui::pos2(viewport.right() - inset, y) + slide)
-                .default_size(egui::vec2(width, height))
-                .constrain(false)
-                .fade_in(false)
-                .interactable(self.open && requested_panel.is_some())
-                .show(ctx, |ui| {
-                    ui.set_clip_rect(clip);
-                    ui.set_width(width);
-                    ui.set_max_height(height);
-                    ui.multiply_opacity(panel_reveal * self.reveal);
-                    panel_frame(12).inner_margin(10).show(ui, |ui| {
-                        inspector(
-                            ui,
-                            panel,
-                            height,
-                            comparison,
-                            custom,
-                            settings,
-                            &mut self.content_changed_at,
-                        );
-                    });
-                })
-                .response
-                .rect;
-            if self.open && requested_panel.is_some() {
-                settled_panel = Some(panel_bounds.translate(-slide));
-            }
+            let panel_open = self.open && requested_panel.is_some();
+            let surface = layout.inspector(
+                ctx,
+                "stellar_inspector",
+                &toolbar,
+                Some(&transport),
+                panel_reveal,
+                self.reveal,
+                panel_open,
+                |ui, height| {
+                    inspector(
+                        ui,
+                        panel,
+                        height,
+                        comparison,
+                        custom,
+                        settings,
+                        &mut self.content_changed_at,
+                    );
+                },
+            );
+            panel_bounds = surface.rect;
+            settled_panel = panel_open.then_some(surface.settled);
         }
 
         let experiment = match settings.mode {
@@ -415,7 +334,7 @@ impl StellarLab {
             Mode::Custom => &*custom,
         };
         let canvas = ctx.viewport_rect();
-        let region = scene_region(viewport, settled_panel, top, bottom, compact);
+        let region = layout.scene_region(&toolbar, Some(&transport), settled_panel);
         let target = if self.open {
             let center = if settled_panel.is_some() {
                 region.center()
@@ -424,14 +343,15 @@ impl StellarLab {
             };
             if self.fit_pending && (requested_panel.is_none() || settled_panel.is_some()) {
                 self.fit_pending = false;
-                self.distance_scale =
-                    fit_distance(canvas, region, center, camera, params, experiment);
+                self.distance_scale = fit_distance(
+                    canvas,
+                    region,
+                    center,
+                    camera,
+                    fit_radius(params, experiment),
+                );
             }
-            let offset = (center - canvas.center()) / canvas.size().max(egui::Vec2::splat(1.0));
-            SceneFraming {
-                offset: bevy::math::Vec2::new(offset.x, offset.y),
-                distance_scale: self.distance_scale.max(1.0),
-            }
+            frame_scene(canvas, center, self.distance_scale)
         } else {
             SceneFraming::default()
         };
@@ -445,8 +365,8 @@ impl StellarLab {
         }
         if self.open {
             [
-                toolbar,
-                transport,
+                toolbar.rect,
+                transport.rect,
                 if requested_panel.is_some() {
                     panel_bounds
                 } else {
@@ -468,36 +388,7 @@ impl StellarLab {
     }
 }
 
-fn scene_region(
-    mut region: egui::Rect,
-    panel: Option<egui::Rect>,
-    top: f32,
-    bottom: f32,
-    compact: bool,
-) -> egui::Rect {
-    const GAP: f32 = 16.0;
-    region.max.y = (bottom - 8.0).clamp(region.top(), region.bottom());
-    if compact {
-        region.min.y = top.clamp(region.top(), region.bottom());
-    }
-    if let Some(panel) = panel {
-        if compact {
-            region.max.y = (panel.top() - GAP).clamp(region.top(), region.bottom());
-        } else {
-            region.max.x = (panel.left() - GAP).clamp(region.left(), region.right());
-        }
-    }
-    region
-}
-
-fn fit_distance(
-    canvas: egui::Rect,
-    region: egui::Rect,
-    center: egui::Pos2,
-    camera: &OrbitCamera,
-    params: &BlackHoleParams,
-    experiment: &Experiment,
-) -> f32 {
+fn fit_radius(params: &BlackHoleParams, experiment: &Experiment) -> f32 {
     let inner_disk = (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0);
     // Frame the inner disk and the local encounter. Distant custom passes
     // remain available in the orbit map without making the black hole tiny.
@@ -509,13 +400,7 @@ fn fit_distance(
         .map(|sample| sample.radius as f32)
         .fold(inner_disk, f32::max)
         .min(12.0);
-    let aspect = canvas.width().max(1.0) / canvas.height().max(1.0);
-    let focal = canvas.height() * 0.5 / (camera.vertical_fov(aspect) * 0.5).tan();
-    let clearance = (center - region.min).min(region.max - center).min_elem();
-    let half_extent = (clearance * 0.9).max(1.0);
-    // Distance at which a sphere of this radius subtends the available angle.
-    let distance = encounter * params.rs * (focal / half_extent).hypot(1.0);
-    (distance / camera.distance).max(1.0)
+    encounter * params.rs
 }
 
 fn inspector(
@@ -578,13 +463,6 @@ fn inspector(
                 );
             }
         });
-}
-
-fn content_opacity(now: f64, changed_at: Option<f64>) -> f32 {
-    changed_at.map_or(1.0, |start| {
-        let t = ((now - start) as f32 / TRANSITION_SECONDS).clamp(0.0, 1.0);
-        0.45 + 0.55 * t
-    })
 }
 
 fn choice(ui: &mut Ui, selected: bool, label: &str) -> egui::Response {

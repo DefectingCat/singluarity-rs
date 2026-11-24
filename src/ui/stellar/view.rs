@@ -6,7 +6,8 @@ use crate::physics::stellar::{Experiment, HORIZON, Outcome, Pass, Sample};
 use crate::ui::style::{EXTREME_BG, MUTED_TEXT};
 use crate::ui::trajectory::{MapProjection, SceneProjection, draw_line, grid};
 
-use super::{COLORS, Mode, Settings, TIDAL_RING, TRANSITION_SECONDS};
+use super::{COLORS, Mode, Settings, TIDAL_RING};
+use crate::ui::lab::TRANSITION_SECONDS;
 
 pub(super) fn map(ui: &mut Ui, settings: &mut Settings, experiment: &Experiment, height: f32) {
     ui.horizontal_wrapped(|ui| {

@@ -1,3 +1,4 @@
+mod lab;
 pub mod loading;
 pub mod preset;
 mod probe;
@@ -7,13 +8,15 @@ mod style;
 mod trajectory;
 
 use bevy::prelude::*;
-use bevy_egui::egui::{self, Align, Align2, Button, Layout, RichText, Ui};
+use bevy_egui::egui::{self, Align, Button, Layout, RichText, Ui};
 
 use crate::camera::{OrbitCamera, OrbitInteraction, SceneFraming, UiPointerActivity, WantsPointer};
 use crate::params::BlackHoleParams;
 use crate::scene::planets::PlanetSystemDirty;
 use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
-use crate::ui::style::{ACCENT, MUTED_TEXT, TEXT, panel_frame};
+use crate::ui::style::{ACCENT, MUTED_TEXT, TEXT};
+
+use lab::{LabLayout, TRANSITION_SECONDS, content_opacity, fit_distance, frame_scene, reveal};
 
 /// Set the style once so subsequent frames can reuse egui's layout caches.
 pub fn setup_egui_style(mut contexts: bevy_egui::EguiContexts, mut done: Local<bool>) {
@@ -47,6 +50,9 @@ pub struct Controls {
     preset: Preset,
     probe: probe::ProbeLab,
     stellar: stellar::StellarLab,
+    tab_changed_at: Option<f64>,
+    fit_pending: bool,
+    distance_scale: f32,
 }
 
 impl Default for Controls {
@@ -57,6 +63,9 @@ impl Default for Controls {
             preset: Preset::Custom,
             probe: probe::ProbeLab::default(),
             stellar: stellar::StellarLab::default(),
+            tab_changed_at: None,
+            fit_pending: false,
+            distance_scale: 1.0,
         }
     }
 }
@@ -88,19 +97,22 @@ pub fn ui_system(
     };
 
     let planets_before = planet_configuration(&params);
-    let regions = if controls.stellar.is_active() {
+    let probe_active = controls.probe.is_active();
+    let stellar_active = controls.stellar.is_active();
+    let main = controls.show(
+        ctx,
+        &mut params,
+        &mut camera,
+        &mut orbit,
+        &mut framing,
+        !probe_active && !stellar_active,
+    );
+    let regions = if probe_active {
+        controls.probe.show(ctx, &camera, &params, &mut framing)
+    } else if stellar_active {
         controls.stellar.show(ctx, &camera, &params, &mut framing)
     } else {
-        if controls.probe.is_open() {
-            *framing = SceneFraming::default();
-        } else {
-            framing.approach(SceneFraming::default(), ctx.input(|input| input.stable_dt));
-        }
-        [
-            controls.show(ctx, &mut params, &mut camera, &mut orbit),
-            egui::Rect::NOTHING,
-            egui::Rect::NOTHING,
-        ]
+        main
     };
     if planets_before != planet_configuration(&params) {
         planet_dirty.0 = true;
@@ -137,82 +149,84 @@ impl Controls {
         params: &mut BlackHoleParams,
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
-    ) -> egui::Rect {
-        if self.probe.is_open() {
-            return self.probe.show(ctx, camera, params);
-        }
-        if !ctx.text_edit_focused() {
+        framing: &mut SceneFraming,
+        visible: bool,
+    ) -> [egui::Rect; 3] {
+        if visible && !ctx.text_edit_focused() && !ctx.any_popup_open() {
             let tab_available = !ctx.egui_wants_keyboard_input();
-            let toggle = ctx.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::H)
+            ctx.input_mut(|input| {
+                if !self.collapsed && input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    self.collapsed = true;
+                } else if input.consume_key(egui::Modifiers::NONE, egui::Key::H)
                     || (tab_available && input.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
+                {
+                    self.toggle();
+                }
             });
-            self.collapsed ^= toggle;
         }
 
-        let viewport = ctx.content_rect();
-        let narrow = viewport.width() <= 680.0;
-        let inset = if narrow { 12.0 } else { 20.0 };
-        if self.collapsed {
-            let size = egui::vec2(300.0, 38.0);
-            return egui::Area::new(egui::Id::new("controls_launcher"))
-                .fixed_pos(egui::pos2(
-                    viewport.right() - inset - size.x,
-                    viewport.top() + inset,
-                ))
-                .default_size(size)
-                .fade_in(false)
-                .show(ctx, |ui| {
-                    panel_frame(9).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            self.probe.launcher(ui, [109.0, 36.0]);
-                            self.stellar.launcher(ui, [90.0, 36.0]);
-                            if ui
-                                .add_sized([99.0, 36.0], Button::new("Controls").frame(false))
-                                .on_hover_text("Show controls (H / Tab)")
-                                .clicked()
-                            {
-                                self.collapsed = false;
-                            }
-                        });
-                    });
-                })
-                .response
-                .rect;
+        let layout = LabLayout::new(ctx);
+        let toolbar_reveal = reveal(ctx, "main_toolbar", visible);
+        let panel_progress = reveal(ctx, "main_inspector", visible && !self.collapsed);
+        if !visible && toolbar_reveal <= 0.0 && panel_progress <= 0.0 {
+            return [egui::Rect::NOTHING; 3];
         }
+        let toolbar = layout.toolbar(ctx, "controls_launcher", toolbar_reveal, visible, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                self.probe.launcher(ui, [103.0, 32.0]);
+                self.stellar.launcher(ui, [80.0, 32.0]);
+                let label = if self.collapsed {
+                    "Controls"
+                } else {
+                    "Hide controls"
+                };
+                if ui
+                    .add_sized([98.0, 32.0], Button::new(label).frame(false))
+                    .on_hover_text("Toggle controls (H / Tab)")
+                    .clicked()
+                {
+                    self.toggle();
+                }
+            });
+        });
 
-        let width = if narrow {
-            (viewport.width() - 2.0 * inset).clamp(0.0, 300.0)
-        } else {
-            (viewport.width() * 0.34).clamp(252.0, 300.0)
-        };
-        let (anchor, vertical_offset, height) = if narrow {
-            (
-                Align2::RIGHT_BOTTOM,
-                -inset,
-                (viewport.height() * 0.62).min(400.0),
-            )
-        } else {
-            (Align2::RIGHT_TOP, inset, viewport.height() - 2.0 * inset)
-        };
-        let rect = egui::Area::new(egui::Id::new("controls_inspector"))
-            .anchor(anchor, egui::vec2(-inset, vertical_offset))
-            .default_size(egui::vec2(width, height.max(0.0)))
-            .fade_in(false)
-            .show(ctx, |ui| {
-                ui.set_width(width);
-                self.inspector(ui, height, params, camera, orbit);
-            })
-            .response
-            .rect;
-        if !ctx.text_edit_focused()
-            && !ctx.any_popup_open()
-            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.collapsed = true;
+        let open = visible && !self.collapsed;
+        let mut panel = egui::Rect::NOTHING;
+        let mut target = SceneFraming::default();
+        if panel_progress > 0.0 {
+            let surface = layout.inspector(
+                ctx,
+                "controls_inspector",
+                &toolbar,
+                None,
+                panel_progress,
+                toolbar_reveal,
+                open,
+                |ui, height| self.inspector(ui, height, params, camera, orbit),
+            );
+            if open {
+                panel = surface.rect;
+                let canvas = ctx.viewport_rect();
+                let region = layout.scene_region(&toolbar, None, Some(surface.settled));
+                if std::mem::take(&mut self.fit_pending) {
+                    let radius =
+                        (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0) * params.rs;
+                    self.distance_scale =
+                        fit_distance(canvas, region, region.center(), camera, radius);
+                }
+                target = frame_scene(canvas, region.center(), self.distance_scale);
+            }
         }
-        rect
+        if visible && ctx.current_pass_index() == 0 {
+            framing.approach(target, ctx.input(|input| input.stable_dt));
+        }
+        [toolbar.rect, panel, egui::Rect::NOTHING]
+    }
+
+    fn toggle(&mut self) {
+        self.collapsed = !self.collapsed;
+        self.fit_pending = !self.collapsed;
     }
 
     fn inspector(
@@ -223,67 +237,37 @@ impl Controls {
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
     ) {
-        panel_frame(16).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            egui::Frame::new()
-                .inner_margin(egui::Margin {
-                    left: 18,
-                    right: 14,
-                    top: 14,
-                    bottom: 8,
-                })
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(31.0);
-                        ui.label(RichText::new("Controls").heading().strong());
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add_sized(
-                                    [31.0, 31.0],
-                                    Button::new(RichText::new("×").size(21.0).color(MUTED_TEXT))
-                                        .frame(true)
-                                        .frame_when_inactive(false),
-                                )
-                                .on_hover_text("Hide controls (H / Tab / Esc)")
-                                .clicked()
-                            {
-                                self.collapsed = true;
-                            }
-                        });
+        self.tabs(ui);
+        ui.separator();
+
+        // Keep preset and reset controls available while the tab scrolls.
+        let body_height = (max_height - ui.min_size().y - 73.0).max(18.0);
+        let tab = self.tab;
+        egui::ScrollArea::vertical()
+            .id_salt(tab)
+            .max_height(body_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let opacity = content_opacity(ui.input(|input| input.time), self.tab_changed_at);
+                ui.multiply_opacity(opacity);
+                if opacity < 1.0 {
+                    ui.ctx().request_repaint();
+                }
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(8, 8))
+                    .show(ui, |ui| {
+                        use crate::ui::sections::*;
+
+                        match tab {
+                            ControlTab::Camera => section_camera(ui, camera, orbit),
+                            ControlTab::Scene => section_scene(ui, params),
+                            ControlTab::Render => section_render(ui, params),
+                            ControlTab::Effects => section_effects(ui, params),
+                        }
                     });
-                });
-            ui.horizontal(|ui| {
-                self.probe.launcher(ui, [108.0, 31.0]);
-                self.stellar.launcher(ui, [91.0, 31.0]);
             });
-            self.tabs(ui);
-            ui.separator();
-
-            // Leave room for the fixed preset and reset controls at the bottom.
-            let body_height = (max_height - ui.min_size().y - 53.0).max(18.0);
-            let tab = self.tab;
-            egui::ScrollArea::vertical()
-                .id_salt(tab)
-                .max_height(body_height)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin::symmetric(18, 12))
-                        .show(ui, |ui| {
-                            use crate::ui::sections::*;
-
-                            ui.spacing_mut().item_spacing.y = 5.0;
-                            match tab {
-                                ControlTab::Camera => section_camera(ui, camera, orbit),
-                                ControlTab::Scene => section_scene(ui, params),
-                                ControlTab::Render => section_render(ui, params),
-                                ControlTab::Effects => section_effects(ui, params),
-                            }
-                        });
-                });
-            ui.separator();
-            self.preset_bar(ui, params);
-        });
+        ui.separator();
+        self.preset_bar(ui, params);
     }
 
     fn tabs(&mut self, ui: &mut Ui) {
@@ -293,7 +277,9 @@ impl Controls {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let width = ui.available_width() / ControlTab::TABS.len() as f32;
-                    for (tab, name) in ControlTab::TABS {
+                    let mut first = egui::Rect::NOTHING;
+                    let mut selected_index = 0.0;
+                    for (index, (tab, name)) in ControlTab::TABS.into_iter().enumerate() {
                         let selected = self.tab == tab;
                         let label = RichText::new(name).strong().color(if selected {
                             TEXT
@@ -315,17 +301,28 @@ impl Controls {
                                 name,
                             )
                         });
-                        if response.clicked() {
+                        if response.clicked() && !selected {
                             self.tab = tab;
+                            self.tab_changed_at = Some(ui.input(|input| input.time));
                         }
-                        if selected {
-                            ui.painter().hline(
-                                response.rect.x_range(),
-                                response.rect.bottom() - 1.0,
-                                egui::Stroke::new(2.0, ACCENT),
-                            );
+                        if index == 0 {
+                            first = response.rect;
+                        }
+                        if self.tab == tab {
+                            selected_index = index as f32;
                         }
                     }
+                    let selected = ui.ctx().animate_value_with_time(
+                        ui.id().with("active_tab"),
+                        selected_index,
+                        TRANSITION_SECONDS,
+                    );
+                    let underline = first.translate(egui::vec2(selected * width, 0.0));
+                    ui.painter().hline(
+                        underline.x_range(),
+                        underline.bottom() - 1.0,
+                        egui::Stroke::new(2.0, ACCENT),
+                    );
                 });
             });
     }
@@ -398,26 +395,42 @@ mod tests {
         let mut camera = OrbitCamera::default();
         let mut orbit = OrbitInteraction::default();
         let mut params = BlackHoleParams::default();
+        let mut framing = SceneFraming::default();
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 650.0));
+        let mut time = 0.0;
         let mut frame = |events| {
+            time += 1.0 / 60.0;
             let input = egui::RawInput {
                 screen_rect: Some(viewport),
                 events,
+                time: Some(time),
                 ..Default::default()
             };
             let mut result = None;
             let mut output = ctx.run_ui(input, |_| {
-                let rect = controls.show(&ctx, &mut params, &mut camera, &mut orbit);
-                result = Some((rect, pointer_over_controls(&ctx, &[rect])));
+                let rects = controls.show(
+                    &ctx,
+                    &mut params,
+                    &mut camera,
+                    &mut orbit,
+                    &mut framing,
+                    true,
+                );
+                result = Some((rects, pointer_over_controls(&ctx, &rects), framing.offset));
             });
             output.textures_delta.clear();
             result.unwrap()
         };
         let panel_point = egui::Event::PointerMoved(egui::pos2(981.0, 145.0));
-        frame(Vec::new());
-        let (inspector, over_inspector) = frame(vec![panel_point.clone()]);
+        for _ in 0..28 {
+            frame(Vec::new());
+        }
+        let ([launcher, inspector, _], over_inspector, expanded_offset) =
+            frame(vec![panel_point.clone()]);
         assert!(over_inspector);
+        assert!(viewport.contains_rect(inspector));
         assert!(inspector.height() < viewport.height());
+        assert!(expanded_offset.x < -0.12);
 
         let h = egui::Event::Key {
             key: egui::Key::H,
@@ -426,12 +439,18 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         };
-        frame(vec![h]);
-        let (launcher, over_collapsed_panel) = frame(vec![panel_point]);
-        assert!(launcher.height() <= 40.0);
+        let (_, _, mid_offset) = frame(vec![h]);
+        assert!(mid_offset.x > expanded_offset.x && mid_offset.x < 0.0);
+        for _ in 0..28 {
+            frame(Vec::new());
+        }
+        let ([_, closed_panel, _], over_collapsed_panel, closed_offset) = frame(vec![panel_point]);
+        assert!(!closed_panel.is_positive());
+        assert_eq!(closed_offset, Vec2::ZERO);
+        assert!(launcher.height() <= 50.0);
         assert!(launcher.width() <= 302.0);
         assert!(!over_collapsed_panel);
-        let (next_launcher, over_launcher) =
+        let ([next_launcher, _, _], over_launcher, _) =
             frame(vec![egui::Event::PointerMoved(launcher.center())]);
         assert!(
             over_launcher,
@@ -447,7 +466,12 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             }]);
         }
-        let (reopened, _) = frame(Vec::new());
-        assert_eq!(reopened, inspector);
+        for _ in 0..28 {
+            frame(Vec::new());
+        }
+        let ([_, reopened, _], _, reopened_offset) = frame(Vec::new());
+        assert!(reopened.is_positive());
+        assert!((reopened.left() - inspector.left()).abs() < 1.0);
+        assert!((reopened_offset.x - expanded_offset.x).abs() < 0.001);
     }
 }

@@ -2,9 +2,10 @@ use std::f64::consts::PI;
 
 use bevy_egui::egui::{self, Color32, Pos2, Sense, Stroke, Ui, Vec2};
 
-use crate::camera::OrbitCamera;
+use crate::camera::{OrbitCamera, SceneFraming};
 use crate::params::BlackHoleParams;
 use crate::physics::probe::{Launch, Sample, Trajectory, horizon_radius};
+use crate::ui::lab::TRANSITION_SECONDS;
 use crate::ui::style::{ACCENT, EXTREME_BG, MUTED_TEXT};
 use crate::ui::trajectory::{MapProjection, SceneProjection, draw_line, grid};
 
@@ -80,13 +81,21 @@ impl Map {
         });
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::drag());
-        if response.hovered() {
+        if response.hovered() && self.drag.is_none() {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             self.zoom((-0.004 * scroll).exp());
         }
+        let extent = ui
+            .ctx()
+            .animate_value_with_time(
+                ui.id().with("probe_extent"),
+                self.extent.ln(),
+                TRANSITION_SECONDS,
+            )
+            .exp();
         let projection = MapProjection {
             center: rect.center(),
-            scale: 0.5 * rect.width().min(rect.height()) / self.extent,
+            scale: 0.5 * rect.width().min(rect.height()) / extent,
         };
         let (start, tip) = handles(projection, *launch);
         if response.drag_started() {
@@ -131,7 +140,7 @@ impl Map {
 
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 7, EXTREME_BG);
-        grid(&painter, rect, projection, self.extent);
+        grid(&painter, rect, projection, extent);
 
         let horizon = horizon_radius(launch.spin);
         painter.circle(
@@ -140,7 +149,9 @@ impl Map {
             Color32::BLACK,
             Stroke::new(1.0, MUTED_TEXT),
         );
-        for (run, color) in visible_runs(runs) {
+        for (run, color, opacity) in animated_runs(ui.ctx(), runs) {
+            let mut painter = painter.clone();
+            painter.multiply_opacity(opacity);
             let run_horizon = horizon_radius(run.launch().spin);
             if (run_horizon - horizon).abs() > 0.005 {
                 painter.circle_stroke(
@@ -187,19 +198,41 @@ fn visible_runs(runs: &[Option<Run>]) -> impl Iterator<Item = (&Trajectory, Colo
         })
 }
 
+fn animated_runs<'a>(
+    ctx: &'a egui::Context,
+    runs: &'a [Option<Run>],
+) -> impl Iterator<Item = (&'a Trajectory, Color32, f32)> {
+    runs.iter()
+        .zip(RUN_STYLES)
+        .filter_map(|(slot, (name, color))| {
+            let opacity = ctx.animate_bool_with_time(
+                egui::Id::new(("probe_run", name)),
+                slot.as_ref().is_some_and(|run| run.visible),
+                TRANSITION_SECONDS,
+            );
+            slot.as_ref()
+                .filter(|_| opacity > 0.0)
+                .map(|run| (&run.path, color, opacity))
+        })
+}
+
 pub(super) fn draw_scene(
     ctx: &egui::Context,
     camera: &OrbitCamera,
     params: &BlackHoleParams,
     runs: &[Option<Run>],
     time: f64,
+    framing: SceneFraming,
+    opacity: f32,
 ) {
-    let rect = ctx.content_rect();
+    let rect = ctx.viewport_rect();
     let painter = ctx
         .layer_painter(egui::LayerId::background())
         .with_clip_rect(rect);
-    let projection = SceneProjection::new(rect, camera, params, Default::default());
-    for (run, color) in visible_runs(runs) {
+    let projection = SceneProjection::new(rect, camera, params, framing);
+    for (run, color, run_opacity) in animated_runs(ctx, runs) {
+        let mut painter = painter.clone();
+        painter.multiply_opacity(opacity * run_opacity);
         draw_track(&painter, run, color, time, |sample| {
             projection.project(sample)
         });
