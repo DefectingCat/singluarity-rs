@@ -10,7 +10,7 @@ use crate::params::{
 };
 use crate::ui::style::{ACCENT, BORDER, MUTED_TEXT, SURFACE, TEXT};
 
-fn slider<Num: egui::emath::Numeric>(
+pub(super) fn slider<Num: egui::emath::Numeric>(
     ui: &mut Ui,
     label: &str,
     value: &mut Num,

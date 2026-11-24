@@ -1,5 +1,6 @@
 pub mod loading;
 pub mod preset;
+mod probe;
 mod sections;
 mod style;
 
@@ -42,6 +43,7 @@ pub struct Controls {
     tab: ControlTab,
     collapsed: bool,
     preset: Preset,
+    probe: probe::ProbeLab,
 }
 
 impl Default for Controls {
@@ -50,6 +52,7 @@ impl Default for Controls {
             tab: ControlTab::Camera,
             collapsed: true,
             preset: Preset::Custom,
+            probe: probe::ProbeLab::default(),
         }
     }
 }
@@ -116,6 +119,9 @@ impl Controls {
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
     ) -> egui::Rect {
+        if self.probe.is_open() {
+            return self.probe.show(ctx, camera, params);
+        }
         if !ctx.text_edit_focused() {
             let tab_available = !ctx.egui_wants_keyboard_input();
             let toggle = ctx.input_mut(|input| {
@@ -129,8 +135,7 @@ impl Controls {
         let narrow = viewport.width() <= 680.0;
         let inset = if narrow { 12.0 } else { 20.0 };
         if self.collapsed {
-            let button_size = egui::vec2(102.0, 36.0);
-            let size = button_size + egui::Vec2::splat(2.0);
+            let size = egui::vec2(218.0, 38.0);
             return egui::Area::new(egui::Id::new("controls_launcher"))
                 .fixed_pos(egui::pos2(
                     viewport.right() - inset - size.x,
@@ -139,15 +144,18 @@ impl Controls {
                 .default_size(size)
                 .fade_in(false)
                 .show(ctx, |ui| {
-                    ui.set_min_size(size);
                     panel_frame(9).show(ui, |ui| {
-                        if ui
-                            .add_sized(button_size, Button::new("Controls").frame(false))
-                            .on_hover_text("Show controls (H / Tab)")
-                            .clicked()
-                        {
-                            self.collapsed = false;
-                        }
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            self.probe.launcher(ui, [114.0, 36.0]);
+                            if ui
+                                .add_sized([102.0, 36.0], Button::new("Controls").frame(false))
+                                .on_hover_text("Show controls (H / Tab)")
+                                .clicked()
+                            {
+                                self.collapsed = false;
+                            }
+                        });
                     });
                 })
                 .response
@@ -221,6 +229,7 @@ impl Controls {
                             {
                                 self.collapsed = true;
                             }
+                            self.probe.launcher(ui, [108.0, 31.0]);
                         });
                     });
                 });
@@ -397,7 +406,7 @@ mod tests {
         frame(vec![h]);
         let (launcher, over_collapsed_panel) = frame(vec![panel_point]);
         assert!(launcher.height() <= 40.0);
-        assert!(launcher.width() <= 110.0);
+        assert!(launcher.width() <= 220.0);
         assert!(!over_collapsed_panel);
         let (next_launcher, over_launcher) =
             frame(vec![egui::Event::PointerMoved(launcher.center())]);
@@ -406,9 +415,10 @@ mod tests {
             "launcher moved from {launcher:?} to {next_launcher:?}"
         );
 
+        let controls_button = egui::pos2(launcher.right() - 51.0, launcher.center().y);
         for pressed in [true, false] {
             frame(vec![egui::Event::PointerButton {
-                pos: launcher.center(),
+                pos: controls_button,
                 button: egui::PointerButton::Primary,
                 pressed,
                 modifiers: egui::Modifiers::NONE,
