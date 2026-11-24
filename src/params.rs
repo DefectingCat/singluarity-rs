@@ -64,8 +64,8 @@ impl DiskColorMode {
     }
 }
 
-/// Supersampling around the higher-order lensed disk rings. Other pixels
-/// trace one ray, while Low and High use two and four near the rings.
+/// Supersampling around the lensed disk rings. Low uses two rays, with four
+/// near the shadow. High uses four across the entire ring region.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum AaQuality {
     Off,
@@ -75,7 +75,7 @@ pub enum AaQuality {
 }
 
 impl AaQuality {
-    /// Sub-rays per pixel, consumed by the shader's supersampling loop.
+    /// Base sub-rays per pixel in the ring region, before shader adaptation.
     pub fn samples(self) -> u32 {
         match self {
             AaQuality::Off => 1,

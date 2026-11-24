@@ -53,7 +53,7 @@ struct BlackHoleUniforms {
     disk_temp: f32,         // blackbody base temperature (Kelvin)
     jets_enabled: u32,      // 0=off, 1=on
     jets_strength: f32,     // jet brightness multiplier
-    aa_samples: u32,        // per-pixel supersample count (1/2/4); >1 antialiases the higher-order lensed-image rings
+    aa_samples: u32,        // base ring supersample count (1/2/4)
     _pad6: f32,             // explicit round-up to 16-byte uniform alignment
     _pad7: f32,             //   (matches BlackHoleUniforms in material.rs byte-for-byte)
     disk_clumps: array<DiskClump, MAX_DISK_CLUMPS>,
@@ -61,12 +61,7 @@ struct BlackHoleUniforms {
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> uniforms: BlackHoleUniforms;
 
-// Per-pixel fragment coordinate, set at the top of `fragment` from
-// `in.position.xy` (the @builtin(position) frag coord). Used as a deterministic
-// seed for the slab sub-sample jitter and the supersample jitter so the noise
-// is spatially stable (no per-frame flicker). `var<private>` is the same form
-// `blur.wgsl` uses for its runtime-indexed kernel tables.
-var<private> pixel_seed: vec2<f32>;
+// Stable per-pixel offset for the slab quadrature.
 var<private> disk_jitter: f32;
 
 // Vertical size of one offscreen-target pixel in uv units (1/offscreen_height),
@@ -346,15 +341,6 @@ fn disk_hit(prev: vec3<f32>, cur: vec3<f32>) -> bool {
     return r >= uniforms.disk_inner && r <= uniforms.disk_outer;
 }
 
-fn hash33(p: vec3<f32>) -> vec3<f32> {
-    let q = vec3<f32>(
-        dot(p, vec3<f32>(127.1, 311.7, 74.7)),
-        dot(p, vec3<f32>(269.5, 183.3, 246.1)),
-        dot(p, vec3<f32>(113.5, 271.9, 124.6)),
-    );
-    return fract(sin(q) * 43758.5453);
-}
-
 // Emissivity and extinction per unit ray length, in disk-local coordinates.
 struct DiskSample {
     emission: vec3f,
@@ -484,16 +470,6 @@ fn disk_flow(r: f32, plane_dir: vec2f, radial_t: f32) -> f32 {
     return min(emission, 3.0);
 }
 
-fn disk_bands(t: f32, plane_dir: vec2f) -> f32 {
-    // Vary the width and azimuth of the radial bands so the dark lanes bend
-    // around the disk. The moving clumps add time-dependent detail on top.
-    let warp = dot(plane_dir, vec2f(0.63, -0.58)) + 0.70 * plane_dir.x * plane_dir.y;
-    let phase = 62.0 * t - 1.15 + warp + 1.35 * sin(26.0 * t - warp);
-    let broad = smoothstep(-0.58, 0.83, sin(phase));
-    let fine = smoothstep(-0.92, -0.25, sin(3.65 * phase + 0.85 * sin(0.8 * phase)));
-    return mix(0.16, 1.0, broad) * mix(0.38, 1.0, fine);
-}
-
 fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSample {
     let inner = uniforms.disk_inner;
     let t = (r - inner) / (uniforms.disk_outer - inner);
@@ -508,10 +484,10 @@ fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSam
     let color = disk_color(r, pos, dir, r_ratio);
     let atmosphere = edge * absorption_profile * mix(0.035, 0.52, radial);
     if (uniforms.disk_color_mode == 2u) {
-        let bands = disk_bands(t, plane_dir);
-        let slope = abs(dir.y);
-        let band_contrast = smoothstep(0.15, 0.75, slope);
-        let surface_bands = mix(0.54 + 0.46 * bands, bands, band_contrast);
+        // Shorter radial scales stretch features into arcs. The unit plane
+        // direction keeps the texture continuous all the way around the disk.
+        let warp = dot(plane_dir, vec2f(1.4, -1.1));
+        let structure = vnoise(vec3f(38.0 * t + warp, 2.8 * plane_dir));
         // Integral of exp(-13 * (y/H)^2) over -H..H is about 0.492 H.
         // Express optical depth for a vertical crossing, including the flat tier.
         let vertical_path = select(FLAT_DISK_PATH, 0.492 * r * uniforms.disk_half_thickness,
@@ -519,13 +495,13 @@ fn disk_sample(r: f32, pos: vec3f, dir: vec3f, height_samples: vec2f) -> DiskSam
         let root_ratio = sqrt(r_ratio);
         // Keep the outer foreground optically thin so the lower arc can shine through.
         let depth = 4.4 * root_ratio * mix(1.0, 0.035, smoothstep(0.16, 0.45, t));
-        let core = edge * core_profile * depth * mix(0.46, 1.0, surface_bands)
+        let core = edge * core_profile * depth * mix(0.62, 1.0, structure)
                  / max(vertical_path, 1e-3);
 
         // Fade the rim at the ISCO with a zero-torque radial flux profile.
         let thermal_flux = radial * r_ratio * (1.0 - root_ratio);
-        let surface = 4.2 * sqrt(thermal_flux) * surface_bands * (1.0 + 0.38 * clumps);
-        let haze = edge * absorption_profile * r_ratio * (0.010 + 0.038 * surface_bands);
+        let surface = 4.2 * sqrt(thermal_flux) * mix(0.42, 0.92, structure) * (1.0 + 0.38 * clumps);
+        let haze = edge * absorption_profile * r_ratio * mix(0.024, 0.040, structure);
         let emission = color * (core * surface + haze) * uniforms.disk_brightness;
         return DiskSample(emission, (core + atmosphere) * uniforms.density_strength);
     }
@@ -897,11 +873,7 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Seed the per-pixel hash used by the slab sub-sample jitter (Fix B) and
-    // the supersample jitter (Fix A). @builtin(position) is the fragment's
-    // framebuffer coordinate; using it makes the noise spatially stable.
-    pixel_seed = in.position.xy;
-    disk_jitter = hash13(vec3f(pixel_seed, 0.0));
+    disk_jitter = hash13(vec3f(in.position.xy, 0.0));
     // fwidth is legal here (uniform control flow, before the RK45 loop) and
     // gives the true offscreen pixel size regardless of render_scale.
     pixel_size_uv = fwidth(in.uv.y);
@@ -911,25 +883,31 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_uv = vec2f((2.0 * in.uv.x - 1.0) * aspect, 1.0 - 2.0 * in.uv.y);
     let center_ray = ray_direction(base_uv);
 
-    // Supersample around the critical impact parameter. A wide margin covers
-    // the displacement and asymmetry at high spin. Rays outside this region
-    // contribute the smooth outer disk or sky and need one march per pixel.
+    // Trace one ray through the outer disk and sky. The thin rings closest
+    // to the shadow need four rays even on Low. Widen that band with spin to
+    // cover the displacement of the critical curve from the Schwarzschild case.
     let impact = length(cross(uniforms.eye.xyz, center_ray));
-    let near_ring = impact >= 1.1 * uniforms.rs && impact <= 4.5 * uniforms.rs;
-    let samples = select(1u, uniforms.aa_samples, near_ring);
-    //
-    // MAX_AA_SAMPLES is a compile-time cap (WGSL needs static loop bounds);
-    // the runtime count comes from uniforms.aa_samples with an early break —
-    // the same MAX-with-break form as the disk integration.
+    let impact_rs = impact / uniforms.rs;
+    let near_ring = impact_rs >= 1.1 && impact_rs <= 4.5;
+    let near_shadow = abs(impact_rs - 2.6) <= 0.30 + 0.78 * abs(uniforms.spin);
+    let ring_samples = select(uniforms.aa_samples, 4u, near_shadow && uniforms.aa_samples > 1u);
+    let samples = select(1u, ring_samples, near_ring);
+
+    // The lensed rings are approximately tangent to circles around the hole.
+    // Spread sub-rays across the radial footprint to catch rings between
+    // pixel centers. The tangential offsets also cover slanted arcs.
+    let radial = normalize(select(vec2f(1.0, 0.0), base_uv, samples > 1u));
+    let tangent = vec2f(-radial.y, radial.x);
     const MAX_AA_SAMPLES = 4u;
     var color_sum = vec3<f32>(0.0);
-    for (var s: u32 = 0u; s < MAX_AA_SAMPLES; s = s + 1u) {
+    for (var s = 0u; s < MAX_AA_SAMPLES; s += 1u) {
         if (s >= samples) { break; }
         var ray = center_ray;
         if (samples > 1u) {
-            // Fit the sub-rays to the actual offscreen pixel at any render scale.
-            let jitter = hash33(vec3f(pixel_seed, f32(s))).xy - 0.5;
-            ray = ray_direction(base_uv + jitter * (2.0 * pixel_size_uv));
+            let across = (f32(s) + 0.5) / f32(samples) - 0.5;
+            let along = select(0.125, -0.125, (s & 1u) == 1u);
+            let offset = radial * across + tangent * along;
+            ray = ray_direction(base_uv + offset * (2.0 * pixel_size_uv));
         }
         color_sum += march(ray);
     }

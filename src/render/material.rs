@@ -69,7 +69,7 @@ pub struct BlackHoleUniforms {
     pub disk_temp: f32,       // blackbody base temperature (Kelvin)
     pub jets_enabled: u32,
     pub jets_strength: f32,
-    // Anti-aliasing (Phase 3.3): per-pixel supersample count for the lensed-image rings.
+    // Base ray count for ring antialiasing. The shader adapts it to the pixel's position.
     pub aa_samples: u32,
     pub _pad6: f32,
     pub _pad7: f32,

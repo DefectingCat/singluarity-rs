@@ -272,7 +272,7 @@ pub fn section_render(ui: &mut Ui, params: &mut BlackHoleParams) {
         &mut params.aa_quality,
         &[
             (AaQuality::Off, "Off (1×)"),
-            (AaQuality::Low, "Low (2×)"),
+            (AaQuality::Low, "Low (2–4×)"),
             (AaQuality::High, "High (4×)"),
         ],
     );
