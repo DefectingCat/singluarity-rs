@@ -138,6 +138,36 @@ fn rk45_higher_spin_still_captures_a_grazing_ray() {
 }
 
 #[test]
+fn high_spin_shadow_is_stable_across_ray_budgets() {
+    use bevy::math::Vec3;
+
+    let (sin, cos) = 7_f32.to_radians().sin_cos();
+    let forward = Vec3::new(0.0, -sin, -cos);
+    let up = Vec3::new(0.0, cos, -sin);
+    let eye = -22.0 * forward;
+    // Fixed screen offsets in Rs. Independent fine integration of the same
+    // bending model captures the inner ray on each side; the outer rays turn
+    // at radii above 1.25 Rs, well outside either horizon.
+    for (x, y, captured) in [
+        (-1.5, 0.5, true),
+        (-1.8, 0.5, false),
+        (2.1, 2.0, true),
+        (2.3, 2.2, false),
+    ] {
+        let dir = (22.0 * forward + x * Vec3::X + y * up).normalize();
+        for spin in [0.998, 1.0] {
+            for steps in [50, 150, 200, 300, 600] {
+                assert_eq!(
+                    physics::is_captured_rk45(eye, dir, steps, spin),
+                    captured,
+                    "offset=({x}, {y}), spin={spin}, steps={steps}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn rk45_capture_count_does_not_increase_for_sampled_rays_at_high_spin() {
     // Compare captures for this camera and sweep of impact parameters.
     let eye = bevy::math::Vec3::new(0.0, 0.0, 50.0);

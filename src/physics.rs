@@ -132,7 +132,7 @@ pub fn kerr_bending_accel(pos: Vec3, dir: Vec3, chi: f32) -> Vec3 {
 // ---- Adaptive Cash–Karp RK45 integrator ----
 // CPU mirror of the shader's `rk45_step` in `black_hole.wesl` and its adaptive
 // loop. Keep these in lockstep with the shader: the
-// Butcher-tableau coefficients, the dt_min forced-accept floor, and the
+// Butcher-tableau coefficients, the local step cap, the retry floor, and the
 // budget = accepted-steps-only semantics must all match, or the loop-level
 // capture/escape tests below pass on code the shader contradicts.
 
@@ -219,16 +219,31 @@ pub fn rk45_step(pos: Vec3, dir: Vec3, dt: f32, chi: f32) -> RkStep {
     }
 }
 
-/// Classify a ray in the approximate bending model. Returns true if the
-/// ray is captured (crosses r < r+(chi)). Mirrors the shader's integration
-/// loop: budget = accepted steps, rejected steps
-/// retry at smaller dt (down to dt_min, which is a forced-accept floor), and
-/// the capture radius is the spin-dependent horizon r+(chi) (= Rs at chi=0).
+/// First intersection of the accepted segment with the horizon.
+fn horizon_entry(start: Vec3, end: Vec3, horizon: f32) -> Option<f32> {
+    let offset = start.length_squared() - horizon * horizon;
+    if offset <= 0.0 {
+        return Some(0.0);
+    }
+    let segment = end - start;
+    let inward = -start.dot(segment);
+    let discriminant = inward * inward - segment.length_squared() * offset;
+    if inward <= 0.0 || discriminant < 0.0 {
+        return None;
+    }
+    // Rationalized near root stays accurate for a start just outside the horizon.
+    let entry = offset / (inward + discriminant.sqrt());
+    (entry <= 1.0).then_some(entry)
+}
+
+/// Classify a ray in the approximate bending model. A ray is captured when
+/// an accepted segment reaches the spin-dependent horizon. The shader uses
+/// the same local step cap and retries rejected steps without spending budget.
 ///
 /// `steps` is the hard cap on *accepted* steps (matches `uniforms.steps`).
 pub fn is_captured_rk45(start_pos: Vec3, start_dir: Vec3, steps: u32, chi: f32) -> bool {
     let mut pos = start_pos;
-    let mut dir = start_dir;
+    let mut dir = start_dir.normalize();
 
     // Same seeding as the shader: total_path from eye distance + escape radius.
     let eye_dist = pos.length();
@@ -239,31 +254,34 @@ pub fn is_captured_rk45(start_pos: Vec3, start_dir: Vec3, steps: u32, chi: f32) 
     let dt_max = dt_init * 4.0;
     let tol = 1e-3;
     let r_plus = kerr_horizon(chi);
+    let refinement_radius = 1.5 * RS * (1.0 + chi);
+    let radius_fraction = (10.0 / steps as f32).max(0.1);
 
     let mut dt = dt_init;
+    let mut radius = eye_dist;
     let mut budget = steps;
 
     while budget > 0 {
-        let step = rk45_step(pos, dir, dt, chi);
+        let step_limit = (radius - refinement_radius).max(radius_fraction * radius);
+        let step_dt = dt.min(step_limit);
+        let step = rk45_step(pos, dir, step_dt, chi);
         let err = step.err;
 
-        if err > tol * 10.0 && dt > dt_min {
+        if err > tol * 10.0 && step_dt > dt_min {
             // Reject: shrink to dt_min and retry (does not consume budget).
             dt = dt_min;
             continue;
         }
         // Accept: consume one budget unit.
         budget -= 1;
-        if err <= tol * 10.0 {
-            dt = (dt * (tol / err.max(1e-12)).powf(0.2)).clamp(dt_min, dt_max);
-        }
+        dt = (step_dt * (tol / err.max(1e-12)).powf(0.2)).clamp(dt_min, dt_max);
 
         let new_pos = step.pos;
-        let r = new_pos.length();
-        if r < r_plus {
+        if radius <= r_plus + step_dt && horizon_entry(pos, new_pos, r_plus).is_some() {
             return true;
         }
-        if r > escape_r {
+        radius = new_pos.length();
+        if radius > escape_r {
             return false;
         }
         pos = new_pos;
@@ -279,6 +297,17 @@ fn _phantom(_v: Vec4) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn horizon_entry_clips_to_the_near_side_even_when_both_ends_are_outside() {
+        let start = Vec3::new(1.0, 0.3, 0.0);
+        let end = Vec3::new(-1.0, 0.3, 0.0);
+        let t = horizon_entry(start, end, 0.5).unwrap();
+        // At y=0.3 the near intersection is x=sqrt(0.5² - 0.3²)=0.4.
+        assert!((start.lerp(end, t).x - 0.4).abs() < 1e-6);
+        assert!(horizon_entry(start, start.lerp(end, 0.25), 0.5).is_none());
+        assert!(horizon_entry(start, start + Vec3::X, 0.5).is_none());
+    }
 
     #[test]
     fn bcrit_value() {

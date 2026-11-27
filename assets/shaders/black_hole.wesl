@@ -754,6 +754,18 @@ fn rk45_step(pos: vec3<f32>, dir: vec3<f32>, dt: f32) -> RkStep {
     return RkStep(new_pos, new_dir, err);
 }
 
+// First intersection along the segment. A fraction above one is a miss.
+fn horizon_entry(start: vec3f, end: vec3f, horizon: f32) -> f32 {
+    let offset = dot(start, start) - horizon * horizon;
+    if (offset <= 0.0) { return 0.0; }
+    let segment = end - start;
+    let inward = -dot(start, segment);
+    let discriminant = inward * inward - dot(segment, segment) * offset;
+    if (inward <= 0.0 || discriminant < 0.0) { return 2.0; }
+    // Rationalized near root stays accurate for a start just outside the horizon.
+    return offset / (inward + sqrt(discriminant));
+}
+
 // ====================== main ======================
 
 // One full ray march (camera → capture/escape/budget) for a single ray
@@ -774,13 +786,17 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
     let dt_max = dt_init * 4.0;
     let tol = 1e-3;
     let r_plus = 0.5 + sqrt(max(0.25 - (uniforms.spin * 0.5) * (uniforms.spin * 0.5), 0.0));
+    // Start at the Schwarzschild photon sphere and widen the refined region
+    // to 3 Rs at full spin. Low budgets need longer chords to finish a ray.
+    let refinement_radius = 1.5 * uniforms.rs * (1.0 + uniforms.spin);
+    let radius_fraction = max(0.1, 10.0 / f32(steps_max));
 
     // Work in disk-local space: rotate eye + dir by -disk_tilt around X so the
     // disk lies on y=0. (disk_hit/disk_color assume disk-local coords.)
     var pos = rot_x(uniforms.eye.xyz, -uniforms.disk_tilt);
     var d   = normalize(rot_x(dir, -uniforms.disk_tilt));
     var dt  = dt_init;
-    var prev = pos;
+    var radius = eye_dist;
     var budget = steps_max;
 
     var accum_color = vec3<f32>(0.0);
@@ -789,35 +805,37 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
     loop {
         if (budget == 0u) { break; }
 
-        let step = rk45_step(pos, d, dt);
+        // The RK position error does not bound the error of shading its straight
+        // chord. Limit chords to a fraction of the local radius while allowing
+        // a distant ray to approach the refined region in one step.
+        let step_limit = max(radius - refinement_radius, radius_fraction * radius);
+        let step_dt = min(dt, step_limit);
+        let step = rk45_step(pos, d, step_dt);
         let err = step.err;
 
-        if (err > tol * 10.0 && dt > dt_min) {
-            // Reject: shrink dt, retry (does not consume budget).
-            // The `dt > dt_min` guard makes dt_min a forced-accept floor: once
-            // dt is already at its minimum, accept the step regardless of error
-            // rather than spinning forever on `continue`. This prevents a GPU
-            // hang when a ray hits a region whose error is intrinsically above
-            // tolerance even at the smallest step (extreme spin, near-horizon).
+        if (err > tol * 10.0 && step_dt > dt_min) {
+            // Retry once at the floor. A smaller, geometry-limited step must
+            // also be accepted here so a near-horizon ray cannot retry forever.
             dt = dt_min;
             continue;
         }
-        // Accept: consume one budget unit, refine dt.
         budget = budget - 1u;
-        if (err > tol * 10.0) {
-            // Forced accept at dt_min (err still high): don't grow dt back up.
-        } else {
-            dt = clamp(dt * pow(tol / max(err, 1e-12), 0.2), dt_min, dt_max);
-        }
+        dt = clamp(step_dt * pow(tol / max(err, 1e-12), 0.2), dt_min, dt_max);
 
-        let new_pos = step.pos;
-        let new_dir = step.dir;
-
-        let r = length(new_pos);
-        if (r < r_plus) {
-            break;
+        var new_pos = step.pos;
+        var new_dir = step.dir;
+        var captured = false;
+        // Unit ray directions bound the chord length by step_dt.
+        if (radius <= r_plus + step_dt) {
+            let entry = horizon_entry(pos, new_pos, r_plus);
+            if (entry <= 1.0) {
+                new_pos = mix(pos, new_pos, entry);
+                new_dir = normalize(mix(d, new_dir, entry));
+                captured = true;
+            }
         }
-        if (r > escape_r) {
+        radius = length(new_pos);
+        if (radius > escape_r) {
             let world_dir = normalize(rot_x(new_dir, uniforms.disk_tilt));
             var bg = vec3<f32>(0.0);
             bg += star_color(world_dir, uniforms.star_intensity);
@@ -831,24 +849,24 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
 
         if (uniforms.disk_quality == 0u) {
             // Flat tier: a single crossing uses the same moving emissivity.
-            if (disk_hit(prev, new_pos)) {
-                let ty = prev.y / (prev.y - new_pos.y);
-                let hit = mix(prev, new_pos, ty);
+            if (disk_hit(pos, new_pos)) {
+                let ty = pos.y / (pos.y - new_pos.y);
+                let hit = mix(pos, new_pos, ty);
                 composite_disk(disk_sample(r_of(hit), hit, new_dir, vec2f(0.0)),
                                FLAT_DISK_PATH, &accum_color, &accum_alpha);
             }
         } else {
-            integrate_disk_segment(prev, new_pos, new_dir, &accum_color, &accum_alpha);
+            integrate_disk_segment(pos, new_pos, new_dir, &accum_color, &accum_alpha);
         }
         if (accum_alpha > 0.99) { break; }
 
         // --- relativistic jets (along the spin axis) ---
         if (uniforms.jets_enabled != 0u) {
-            sample_jets(new_pos, new_dir, r_plus, length(new_pos - prev), &accum_color, &accum_alpha);
+            sample_jets(new_pos, new_dir, r_plus, length(new_pos - pos), &accum_color, &accum_alpha);
             if (accum_alpha > 0.99) { break; }
         }
 
-        let ph = planet_hit(prev, new_pos, new_dir);
+        let ph = planet_hit(pos, new_pos, new_dir);
         if (ph.w > 0.0) {
             accum_color += (1.0 - accum_alpha) * ph.xyz * ph.w;
             accum_alpha += (1.0 - accum_alpha) * ph.w;
@@ -856,13 +874,14 @@ fn march(dir: vec3<f32>) -> vec3<f32> {
         }
 
         if (uniforms.grid_enabled != 0u) {
-            let g = grid_hit(prev, new_pos);
+            let g = grid_hit(pos, new_pos);
             if (g.x + g.y + g.z > 0.0) {
                 accum_color += g;
             }
         }
 
-        prev = new_pos;
+        // Keep foreground emission up to the first horizon crossing.
+        if (captured) { break; }
         pos = new_pos;
         d = new_dir;
     }
