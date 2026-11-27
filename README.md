@@ -31,6 +31,7 @@ Release web build: `trunk build --release`. On a browser without WebGPU, the pag
 
 - **Drag** (mouse) — orbit the camera around the hole. Release while moving to coast briefly.
 - **Scroll** — zoom (changes distance / impact parameter).
+- **Guided tour** opens nine interactive chapters. Use the arrows or chapter markers to navigate. Each chapter moves the camera or animates a scene parameter. Pause, replay, or drag the slider to compare views. **Exit** or **Esc** returns to your original scene.
 - **Controls** (top right, or **H**) opens the inspector.
   - **Camera** — adjust distance, yaw, pitch, and short-axis field of view. **Play flyby** starts a ten-second approach from distance 44 to 22. Drag or scroll in the scene to interrupt it. **Auto orbit** is on by default and rotates the camera while idle.
   - **Scene** — spin (χ), ISCO and horizon readouts, disk geometry and color. **Flow speed** controls the gas pattern rate, and `0×` freezes it in place.

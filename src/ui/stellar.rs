@@ -188,12 +188,18 @@ impl StellarLab {
         self.open || self.reveal > 0.0
     }
 
-    pub(super) fn launcher(&mut self, ui: &mut Ui, size: [f32; 2]) {
+    pub(super) fn launcher(&mut self, ui: &mut Ui, narrow: bool) {
+        let (label, width) = if narrow {
+            ("Star", 44.0)
+        } else {
+            ("Feed a star", 80.0)
+        };
         if ui
             .add_sized(
-                size,
-                Button::new(RichText::new("Feed a star").color(ACCENT)).frame(false),
+                [width, 32.0],
+                Button::new(RichText::new(label).color(ACCENT)).frame(false),
             )
+            .on_hover_text("Feed a star")
             .clicked()
         {
             self.experiments.get_or_insert_with(Experiments::default);

@@ -5,6 +5,7 @@ mod probe;
 mod sections;
 mod stellar;
 mod style;
+mod tour;
 mod trajectory;
 
 use bevy::prelude::*;
@@ -48,6 +49,7 @@ pub struct Controls {
     tab: ControlTab,
     collapsed: bool,
     preset: Preset,
+    tour: tour::Tour,
     probe: probe::ProbeLab,
     stellar: stellar::StellarLab,
     tab_changed_at: Option<f64>,
@@ -61,6 +63,7 @@ impl Default for Controls {
             tab: ControlTab::Camera,
             collapsed: true,
             preset: Preset::Custom,
+            tour: tour::Tour::default(),
             probe: probe::ProbeLab::default(),
             stellar: stellar::StellarLab::default(),
             tab_changed_at: None,
@@ -98,9 +101,7 @@ pub fn ui_system(
     };
 
     let planets_before = planet_configuration(&params);
-    let probe_active = controls.probe.is_active();
-    let stellar_active = controls.stellar.is_active();
-    let main = controls.show(
+    let regions = controls.show(
         ctx,
         &mut params,
         *geometry,
@@ -108,17 +109,6 @@ pub fn ui_system(
         &mut orbit,
         &mut framing,
     );
-    let regions = if probe_active {
-        controls
-            .probe
-            .show(ctx, &camera, &params, geometry.isco, &mut framing)
-    } else if stellar_active {
-        controls
-            .stellar
-            .show(ctx, &camera, &params, geometry.isco, &mut framing)
-    } else {
-        main
-    };
     if planets_before != planet_configuration(&params) {
         planet_dirty.0 = true;
     }
@@ -157,7 +147,31 @@ impl Controls {
         orbit: &mut OrbitInteraction,
         framing: &mut SceneFraming,
     ) -> [egui::Rect; 3] {
-        let visible = !self.probe.is_active() && !self.stellar.is_active();
+        let main = self.main_controls(ctx, params, geometry, camera, orbit, framing);
+        if self.tour.is_active() {
+            self.tour
+                .show(ctx, camera, params, geometry, orbit, framing)
+        } else if self.probe.is_active() {
+            self.probe.show(ctx, camera, params, geometry.isco, framing)
+        } else if self.stellar.is_active() {
+            self.stellar
+                .show(ctx, camera, params, geometry.isco, framing)
+        } else {
+            main
+        }
+    }
+
+    fn main_controls(
+        &mut self,
+        ctx: &egui::Context,
+        params: &mut BlackHoleParams,
+        geometry: KerrGeometry,
+        camera: &mut OrbitCamera,
+        orbit: &mut OrbitInteraction,
+        framing: &mut SceneFraming,
+    ) -> [egui::Rect; 3] {
+        let visible =
+            !self.tour.is_active() && !self.probe.is_active() && !self.stellar.is_active();
         if visible && !ctx.text_edit_focused() && !ctx.any_popup_open() {
             let tab_available = !ctx.egui_wants_keyboard_input();
             ctx.input_mut(|input| {
@@ -178,17 +192,25 @@ impl Controls {
             return [egui::Rect::NOTHING; 3];
         }
         let toolbar = layout.toolbar(ctx, "controls_launcher", toolbar_reveal, visible, |ui| {
+            if !visible {
+                ui.disable();
+            }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                self.probe.launcher(ui, [103.0, 32.0]);
-                self.stellar.launcher(ui, [80.0, 32.0]);
+                self.tour.launcher(ui, camera, params, orbit, *framing);
+                let narrow = ctx.content_rect().width() < 420.0;
+                self.probe.launcher(ui, narrow);
+                self.stellar.launcher(ui, narrow);
                 let label = if self.collapsed {
                     "Controls"
                 } else {
                     "Hide controls"
                 };
                 if ui
-                    .add_sized([98.0, 32.0], Button::new(label).frame(false))
+                    .add_sized(
+                        [if narrow { 84.0 } else { 98.0 }, 32.0],
+                        Button::new(label).frame(false),
+                    )
                     .on_hover_text("Toggle controls (H / Tab)")
                     .clicked()
                 {
@@ -223,7 +245,12 @@ impl Controls {
                 target = frame_scene(canvas, region.center(), self.distance_scale);
             }
         }
-        if visible && ctx.current_pass_index() == 0 {
+        if visible
+            && !self.tour.is_active()
+            && !self.probe.is_active()
+            && !self.stellar.is_active()
+            && ctx.current_pass_index() == 0
+        {
             framing.approach(target, ctx.input(|input| input.stable_dt));
         }
         [toolbar.rect, panel, egui::Rect::NOTHING]
@@ -473,7 +500,7 @@ mod tests {
         assert!(!closed_panel.is_positive());
         assert_eq!(closed_offset, Vec2::ZERO);
         assert!(launcher.height() <= 50.0);
-        assert!(launcher.width() <= 302.0);
+        assert!(launcher.width() <= 385.0);
         assert!(!over_collapsed_panel);
         let ([next_launcher, _, _], over_launcher, _) =
             frame(vec![egui::Event::PointerMoved(launcher.center())]);
