@@ -2,7 +2,7 @@
 
 ## Camera auto-orbit decision
 
-The camera opens on a stationary view about seven degrees above the disk. The Camera panel can start a ten-second flyby from distance 44 to the default 22, or enable a continuous 45-second orbit. Dragging or zooming the scene interrupts the flyby. Manual input and active UI controls pause continuous orbit, which resumes after 1.5 seconds of inactivity. The field of view follows the shorter viewport axis so portrait windows keep the main lensed arcs in frame.
+Once the scene can render, the camera eases from 60 to 22 Schwarzschild radii and from 21° to 7° above the disk over 1.8 seconds. The web entrance shows the opening view while WebGPU starts and honors the browser’s reduced-motion preference. The Camera panel can also start a ten-second flyby from 44 to 22. Dragging or zooming interrupts either flight. The default 45-second idle orbit resumes after 1.5 seconds of inactivity. The field of view follows the shorter viewport axis so portrait windows keep the main lensed arcs in frame.
 
 ## egui slider writeback gotcha (camera sliders must use `SliderClamping::Edits`)
 

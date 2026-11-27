@@ -3,6 +3,7 @@ use bevy::input::mouse::MouseScrollUnit;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use std::f32::consts::{PI, TAU};
+use std::time::Duration;
 
 /// Orbit camera state. The black hole is at the origin (Rs=1 units).
 /// `distance` is the camera radius; `yaw`/`pitch` orient it.
@@ -22,7 +23,7 @@ impl Default for OrbitCamera {
         Self {
             // Look across the foreground from about 7° above the disk.
             yaw: 0.0,
-            pitch: 0.12,
+            pitch: 7.0_f32.to_radians(),
             distance: 22.0,
             fov: 0.84,
             auto_rotate: true,
@@ -80,14 +81,22 @@ const DRAG_VELOCITY_RESPONSE: f32 = 30.0;
 const MAX_DRAG_SPEED: f32 = 4.0;
 const COAST_DAMPING: f32 = 8.0;
 const COAST_STOP_SPEED: f32 = 0.02;
+const OPENING_DISTANCE: f32 = 60.0;
+const OPENING_PITCH: f32 = 21.0_f32.to_radians();
+const OPENING_DURATION: f32 = 1.8;
 const FLYBY_START_DISTANCE: f32 = 44.0;
 const FLYBY_DURATION: f32 = 10.0;
 
-/// Tracks input and an optional camera flyby.
+enum CameraFlight {
+    Opening { started_at: Option<Duration> },
+    Flyby { elapsed: f32 },
+}
+
+/// Tracks manual input and the current camera flight.
 #[derive(Resource)]
 pub struct OrbitInteraction {
     idle_seconds: f32,
-    flyby_elapsed: Option<f32>,
+    flight: Option<CameraFlight>,
     angular_velocity: Vec2,
 }
 
@@ -95,7 +104,7 @@ impl Default for OrbitInteraction {
     fn default() -> Self {
         Self {
             idle_seconds: AUTO_ORBIT_IDLE_DELAY,
-            flyby_elapsed: None,
+            flight: None,
             angular_velocity: Vec2::ZERO,
         }
     }
@@ -103,7 +112,13 @@ impl Default for OrbitInteraction {
 
 impl OrbitInteraction {
     pub(crate) fn flyby_active(&self) -> bool {
-        self.flyby_elapsed.is_some()
+        matches!(self.flight, Some(CameraFlight::Flyby { .. }))
+    }
+
+    fn prepare_opening(&mut self, camera: &mut OrbitCamera) {
+        camera.distance = OPENING_DISTANCE;
+        camera.pitch = OPENING_PITCH;
+        self.flight = Some(CameraFlight::Opening { started_at: None });
     }
 
     pub(crate) fn start_flyby(&mut self, camera: &mut OrbitCamera) {
@@ -112,12 +127,50 @@ impl OrbitInteraction {
             auto_rotate: camera.auto_rotate,
             ..default()
         };
-        self.flyby_elapsed = Some(0.0);
+        self.flight = Some(CameraFlight::Flyby { elapsed: 0.0 });
         self.angular_velocity = Vec2::ZERO;
     }
 
-    pub(crate) fn stop_flyby(&mut self) {
-        self.flyby_elapsed = None;
+    pub(crate) fn stop_flight(&mut self) {
+        self.flight = None;
+    }
+
+    fn advance_flight(&mut self, camera: &mut OrbitCamera, now: Duration, seconds: f32) -> bool {
+        let settled = OrbitCamera::default();
+        match &mut self.flight {
+            Some(CameraFlight::Opening { started_at }) => {
+                // The controller first runs when the distant scene can actually be drawn.
+                let elapsed = now - *started_at.get_or_insert(now);
+                let t = (elapsed.as_secs_f32() / OPENING_DURATION).min(1.0);
+                if t < 1.0 {
+                    let ease = if t < 0.5 {
+                        4.0 * t.powi(3)
+                    } else {
+                        1.0 - 4.0 * (1.0 - t).powi(3)
+                    };
+                    // Equal changes of log radius give equal apparent changes of scale.
+                    camera.distance =
+                        OPENING_DISTANCE * (settled.distance / OPENING_DISTANCE).powf(ease);
+                    camera.pitch = OPENING_PITCH.lerp(settled.pitch, ease);
+                    return true;
+                }
+                camera.distance = settled.distance;
+                camera.pitch = settled.pitch;
+                self.idle_seconds = 0.0;
+            }
+            Some(CameraFlight::Flyby { elapsed }) => {
+                *elapsed += seconds;
+                let t = (*elapsed / FLYBY_DURATION).min(1.0);
+                camera.distance =
+                    FLYBY_START_DISTANCE.lerp(settled.distance, t * t * (3.0 - 2.0 * t));
+                if t < 1.0 {
+                    return true;
+                }
+            }
+            None => return false,
+        }
+        self.stop_flight();
+        true
     }
 
     fn coast(&mut self, camera: &mut OrbitCamera, seconds: f32) -> bool {
@@ -136,6 +189,17 @@ impl OrbitInteraction {
         self.idle_seconds = 0.0;
         true
     }
+}
+
+pub(crate) fn prepare_opening_view(
+    mut camera: ResMut<OrbitCamera>,
+    mut orbit: ResMut<OrbitInteraction>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    if crate::web::prefers_reduced_motion() {
+        return;
+    }
+    orbit.prepare_opening(&mut camera);
 }
 
 /// Set by the UI system while a control is actively being manipulated.
@@ -200,6 +264,7 @@ pub fn orbit_controller(
     mut interaction: ResMut<OrbitInteraction>,
     mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
+    real_time: Res<Time<Real>>,
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
 ) {
@@ -214,7 +279,7 @@ pub fn orbit_controller(
         let start_pitch = camera.pitch;
         let mut yaw_delta = 0.0;
         for ev in motion.read() {
-            interaction.stop_flyby();
+            interaction.stop_flight();
             // Orbit opposite the pointer so the foreground follows the drag.
             let delta = Vec2::new(-ev.delta.x, ev.delta.y) * DRAG_RADIANS_PER_PIXEL;
             camera.rotate(delta);
@@ -240,7 +305,7 @@ pub fn orbit_controller(
         if wants.0 {
             continue;
         }
-        interaction.stop_flyby();
+        interaction.stop_flight();
         // Trackpads/Magic Mouse deliver PIXEL deltas (tens of px per event);
         // wheel mice deliver LINE deltas (±1 per notch). Normalize pixels to
         // notch-equivalents — treating raw pixels as lines made a single
@@ -258,19 +323,15 @@ pub fn orbit_controller(
         // 2.6 ≈ bcrit; don't let the camera pass through the shadow.
     }
     if active_interaction {
+        if matches!(interaction.flight, Some(CameraFlight::Opening { .. })) {
+            interaction.stop_flight();
+        }
         interaction.idle_seconds = 0.0;
         return;
     }
 
     interaction.idle_seconds = (interaction.idle_seconds + seconds).min(AUTO_ORBIT_IDLE_DELAY);
-    if let Some(elapsed) = interaction.flyby_elapsed.as_mut() {
-        *elapsed += seconds;
-        let t = (*elapsed / FLYBY_DURATION).min(1.0);
-        let eased = t * t * (3.0 - 2.0 * t);
-        camera.distance = FLYBY_START_DISTANCE.lerp(OrbitCamera::default().distance, eased);
-        if t == 1.0 {
-            interaction.stop_flyby();
-        }
+    if interaction.advance_flight(&mut camera, real_time.elapsed(), seconds) {
         return;
     }
     if interaction.coast(&mut camera, seconds) {
@@ -284,8 +345,8 @@ pub fn orbit_controller(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::input::mouse::MouseScrollUnit;
-    use std::time::Duration;
 
     fn wheel_world(distance: f32) -> World {
         let mut world = World::new();
@@ -298,6 +359,7 @@ mod tests {
         });
         world.insert_resource(ButtonInput::<MouseButton>::default());
         world.insert_resource(Time::<()>::default());
+        world.insert_resource(Time::<Real>::default());
         world.init_resource::<Messages<MouseMotion>>();
         world.init_resource::<Messages<MouseWheel>>();
         let mut schedule = Schedule::new(Update);
@@ -322,9 +384,9 @@ mod tests {
     }
 
     fn advance(world: &mut World, seconds: f32) {
-        world
-            .resource_mut::<Time>()
-            .advance_by(Duration::from_secs_f32(seconds));
+        let delta = Duration::from_secs_f32(seconds);
+        world.resource_mut::<Time>().advance_by(delta);
+        world.resource_mut::<Time<Real>>().advance_by(delta);
         world.run_schedule(Update);
         world.resource_mut::<ButtonInput<MouseButton>>().clear();
     }
@@ -341,6 +403,56 @@ mod tests {
         world
             .resource_mut::<ButtonInput<MouseButton>>()
             .release(MouseButton::Left);
+    }
+
+    #[test]
+    fn opening_starts_on_the_first_scene_frame_and_eases_to_the_classic_view() {
+        let mut world = wheel_world(22.0);
+        world.run_system_once(prepare_opening_view).unwrap();
+        // A long GPU warmup must not consume the shot.
+        advance(&mut world, 8.0);
+        let start = *world.resource::<OrbitCamera>();
+        assert_eq!(start.distance, 60.0);
+        assert!((start.pitch.to_degrees() - 21.0).abs() < 1e-5);
+
+        advance(&mut world, 0.45);
+        let early = *world.resource::<OrbitCamera>();
+        advance(&mut world, 0.45);
+        let middle = *world.resource::<OrbitCamera>();
+        assert!(start.distance > early.distance && early.distance > middle.distance);
+        assert!(start.pitch - early.pitch < early.pitch - middle.pitch);
+        assert!((middle.distance - (60.0_f32 * 22.0).sqrt()).abs() < 1e-4);
+        assert!((middle.pitch.to_degrees() - 14.0).abs() < 1e-5);
+        assert_eq!(middle.yaw, start.yaw);
+        assert_eq!(middle.fov, start.fov);
+
+        advance(&mut world, 0.9);
+        assert!(*world.resource::<OrbitCamera>() == OrbitCamera::default());
+        advance(&mut world, 1.0);
+        assert!(*world.resource::<OrbitCamera>() == OrbitCamera::default());
+    }
+
+    #[test]
+    fn drag_and_scroll_take_over_the_opening_from_its_current_pose() {
+        for use_drag in [true, false] {
+            let mut world = wheel_world(22.0);
+            world.run_system_once(prepare_opening_view).unwrap();
+            advance(&mut world, 0.0);
+            advance(&mut world, 0.9);
+            let before = *world.resource::<OrbitCamera>();
+            if use_drag {
+                drag(&mut world, Vec2::new(30.0, 4.0), 0.016);
+                assert!(world.resource::<OrbitCamera>().yaw < before.yaw);
+                release_drag(&mut world);
+            } else {
+                let distance = scroll(&mut world, MouseScrollUnit::Line, &[1.0]);
+                assert!((distance - before.distance / 1.1).abs() < 1e-4);
+            }
+            let manual_distance = world.resource::<OrbitCamera>().distance;
+            advance(&mut world, 2.0);
+            assert_eq!(world.resource::<OrbitCamera>().distance, manual_distance);
+            assert!(world.resource::<OrbitInteraction>().flight.is_none());
+        }
     }
 
     #[test]

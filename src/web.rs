@@ -16,10 +16,23 @@ pub fn webgpu_available() -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
+pub(crate) fn prefers_reduced_motion() -> bool {
+    web_sys::window()
+        .and_then(|window| {
+            window
+                .match_media("(prefers-reduced-motion: reduce)")
+                .ok()
+                .flatten()
+        })
+        .is_some_and(|preference| preference.matches())
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn show_fallback_message() {
     if let Some(window) = web_sys::window() {
         if let Some(document) = window.document() {
             if let Some(body) = document.body() {
+                remove_loading_screen();
                 let el = document
                     .create_element("div")
                     .unwrap()
@@ -45,8 +58,7 @@ pub fn remove_loading_screen() {
     if let Some(window) = web_sys::window() {
         if let Some(document) = window.document() {
             if let Some(overlay) = document.get_element_by_id("loading-overlay") {
-                let class_list = overlay.class_list();
-                class_list.add_1("fade-out").ok();
+                overlay.remove();
             }
         }
     }

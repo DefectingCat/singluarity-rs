@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The default view holds at 22 Schwarzschild radii, about 7° above the disk, with a 48° field of view along the shorter viewport axis.
+- The opening view approaches from 60 to 22 Schwarzschild radii over 1.8 seconds, lowering from 21° to 7° above the disk with a fixed 48° field of view along the shorter viewport axis.
 - The foreground disk and lensed arcs show the same orbiting, shearing bright clumps. Separate emission and absorption profiles smooth the arcs and reveal the lower arc. Jets and planets are optional in the opening scene.
 - Bloom has a soft highlight threshold and uses one, three, or five passes across the active quality tiers.
 

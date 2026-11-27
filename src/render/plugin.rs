@@ -6,11 +6,12 @@ use bevy::image::Image;
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::prepare_erased_assets;
 use bevy::render::render_asset::prepare_assets;
-use bevy::render::render_resource::{Extent3d, TextureFormat};
+use bevy::render::render_resource::{Extent3d, PipelineCache, TextureFormat};
 use bevy::render::storage::ShaderBuffer;
+use bevy::render::sync_world::MainEntity;
 use bevy::render::texture::GpuImage;
-use bevy::render::{Render, RenderApp};
-use bevy::sprite_render::Material2dPlugin;
+use bevy::render::{Extract, ExtractSchedule, MainWorld, Render, RenderApp};
+use bevy::sprite_render::{Material2dPlugin, SpecializedMaterial2dPipelineCache};
 use bevy::transform::TransformSystems;
 use bevy_asset_loader::prelude::*;
 use bevy_egui::EguiPostUpdateSet;
@@ -107,13 +108,13 @@ struct RenderTargetsPrepared;
 
 impl Plugin for BlackHolePlugin {
     fn build(&self, app: &mut App) {
+        let mut loading = LoadingState::new(AppState::Loading).load_collection::<ShaderAssets>();
+        if app.get_sub_app(RenderApp).is_none() {
+            loading = loading.continue_to_state(AppState::Running);
+        }
         app.init_state::<AppState>()
             .init_resource::<LoadingProgress>()
-            .add_loading_state(
-                LoadingState::new(AppState::Loading)
-                    .continue_to_state(AppState::Running)
-                    .load_collection::<ShaderAssets>(),
-            )
+            .add_loading_state(loading)
             .init_resource::<crate::camera::OrbitCamera>()
             .init_resource::<crate::camera::SceneFraming>()
             .init_resource::<crate::camera::OrbitInteraction>()
@@ -129,6 +130,7 @@ impl Plugin for BlackHolePlugin {
             .add_plugins(Material2dPlugin::<crate::render::material::BlurMaterial>::default())
             .add_plugins(bevy_egui::EguiPlugin::default())
             .add_systems(bevy::prelude::PreStartup, disable_egui_auto_context)
+            .add_systems(Startup, crate::camera::prepare_opening_view)
             .add_systems(Startup, spawn_fullscreen_quad)
             .add_systems(Startup, crate::scene::planets::spawn_planet_system)
             .add_systems(
@@ -161,12 +163,21 @@ impl Plugin for BlackHolePlugin {
                 bevy_egui::EguiPrimaryContextPass,
                 (
                     crate::ui::setup_egui_style,
-                    crate::ui::loading::loading_ui_system.run_if(in_state(AppState::Loading)),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    crate::ui::loading::loading_ui_system
+                        .run_if(in_state(AppState::Loading))
+                        .run_if(|window: Single<&Window>| window.visible),
                     crate::ui::ui_system.run_if(in_state(AppState::Running)),
                 ),
             );
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(
+                ExtractSchedule,
+                finish_scene_loading.run_if(|state: Extract<Res<State<AppState>>>| {
+                    *state.get() == AppState::Loading
+                }),
+            );
             // Resizing replaces the GPU texture view under the same image handle.
             render_app.configure_sets(
                 Render,
@@ -177,6 +188,32 @@ impl Plugin for BlackHolePlugin {
                     .before(prepare_erased_assets::<MeshMaterial2d<CompositeMaterial>>),
             );
         }
+    }
+}
+
+/// Extraction can see the previous render frame's compiled passes and advance the main app.
+/// Shader assets alone can be ready several frames before the first drawable black hole.
+fn finish_scene_loading(
+    mut main: ResMut<MainWorld>,
+    views: Res<SpecializedMaterial2dPipelineCache>,
+    pipelines: Res<PipelineCache>,
+) {
+    if !main.contains_resource::<ShaderAssets>() {
+        return;
+    }
+    let mut quads =
+        main.query_filtered::<Entity, Or<(With<QuadScaleFactor>, With<CompositeQuad>)>>();
+    let mut quads = quads.iter(&main).peekable();
+    if quads.peek().is_some()
+        && quads.all(|quad| {
+            views.values().any(|view| {
+                view.get(&MainEntity::from(quad))
+                    .is_some_and(|&id| pipelines.get_render_pipeline(id).is_some())
+            })
+        })
+    {
+        main.resource_mut::<NextState<AppState>>()
+            .set(AppState::Running);
     }
 }
 

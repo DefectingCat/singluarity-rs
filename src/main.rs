@@ -33,6 +33,8 @@ fn main() {
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "singularity-rs".into(),
+                // Present the native window with the distant black hole already drawn.
+                visible: cfg!(target_arch = "wasm32"),
                 // On web, make the canvas track the browser window size.
                 fit_canvas_to_parent: true,
                 ..default()
@@ -63,6 +65,11 @@ fn main() {
     }
 
     app.add_plugins(default_plugins)
-        .add_plugins(BlackHolePlugin)
-        .run();
+        .add_plugins(BlackHolePlugin);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_systems(
+        OnEnter(singularity_rs::state::AppState::Running),
+        |mut window: Single<&mut Window, With<bevy::window::PrimaryWindow>>| window.visible = true,
+    );
+    app.run();
 }

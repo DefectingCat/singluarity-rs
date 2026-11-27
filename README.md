@@ -2,7 +2,7 @@
 
 A real-time, physically-motivated **black-hole renderer** in [Bevy](https://bevyengine.org) 0.20. It traces a bent ray per pixel to produce gravitational lensing, the Einstein ring, a Doppler-beamed accretion disk, a lensed starfield, and optional lensed planets, a spacetime-curvature (Flamm) grid, and a cubemap skybox. Runs on **desktop** and the **web** (WebGPU).
 
-The opening shot is inspired by Gargantua from _Interstellar_. The camera holds at 22 Schwarzschild radii, about 7° above the accretion disk, with a 48° field of view along the shorter viewport axis. Warm foreground gas and two lensed arcs frame the shadow. Bright clumps move and shear around the disk, with faster flow near the inner edge.
+The opening shot is inspired by Gargantua from _Interstellar_. Over 1.8 seconds the camera moves from 60 to 22 Schwarzschild radii and lowers from 21° to 7° above the accretion disk. Its 48° field of view stays fixed along the shorter viewport axis. Drag or scroll to take over at any point. Warm foreground gas and two lensed arcs frame the shadow. Bright clumps move and shear around the disk, with faster flow near the inner edge.
 
 The ray model combines Schwarzschild bending with a leading-order Lense–Thirring frame-dragging term. The dimensionless spin χ ∈ [0,1] controls this term and sets the disk's inner edge via the prograde Kerr ISCO. At χ = 0 the frame-dragging term vanishes.
 
