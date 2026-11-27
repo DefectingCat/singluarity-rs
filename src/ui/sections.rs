@@ -154,7 +154,7 @@ pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera, orbit: &mut OrbitInter
         false,
     );
     if before != *cam {
-        orbit.stop_flight();
+        orbit.stop_motion();
     }
     ui.separator();
     let active = orbit.flyby_active();
@@ -165,7 +165,7 @@ pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera, orbit: &mut OrbitInter
         .clicked()
     {
         if active {
-            orbit.stop_flight();
+            orbit.stop_motion();
         } else {
             orbit.start_flyby(cam);
         }

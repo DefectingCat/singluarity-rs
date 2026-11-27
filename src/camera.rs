@@ -1,7 +1,7 @@
-use bevy::input::mouse::MouseMotion;
 use bevy::input::mouse::MouseScrollUnit;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use bevy::window::WindowEvent;
 use std::f32::consts::{PI, TAU};
 use std::time::Duration;
 
@@ -76,11 +76,15 @@ impl SceneFraming {
 const AUTO_ORBIT_PERIOD: f32 = 45.0;
 const AUTO_ORBIT_IDLE_DELAY: f32 = 1.5;
 const MAX_PITCH: f32 = PI - 0.05;
-const DRAG_RADIANS_PER_PIXEL: f32 = 0.005;
-const DRAG_VELOCITY_RESPONSE: f32 = 30.0;
-const MAX_DRAG_SPEED: f32 = 4.0;
-const COAST_DAMPING: f32 = 8.0;
-const COAST_STOP_SPEED: f32 = 0.02;
+// Event Horizon orbit gains in radians per logical pixel and inverse seconds.
+const DRAG_RADIANS_PER_PIXEL: Vec2 = Vec2::new(-0.0055, 0.0045);
+// The reference estimates release speed from the last pointer move over 16 ms.
+const DRAG_SAMPLE_SECONDS: f32 = 0.016;
+const DRAG_FOLLOW_RATE: f32 = 12.0;
+const HELD_VELOCITY_DAMPING: f32 = 30.0;
+const COAST_DAMPING: f32 = 4.0;
+const COAST_STOP_SPEED: f32 = 0.0001;
+const ANGLE_EPSILON: f32 = 0.00001;
 const OPENING_DISTANCE: f32 = 60.0;
 const OPENING_PITCH: f32 = 21.0_f32.to_radians();
 const OPENING_DURATION: f32 = 1.8;
@@ -97,6 +101,9 @@ enum CameraFlight {
 pub struct OrbitInteraction {
     idle_seconds: f32,
     flight: Option<CameraFlight>,
+    dragging: bool,
+    /// Target minus displayed angles. Keeping yaw relative preserves turns across ±π.
+    pending_rotation: Vec2,
     angular_velocity: Vec2,
 }
 
@@ -105,6 +112,8 @@ impl Default for OrbitInteraction {
         Self {
             idle_seconds: AUTO_ORBIT_IDLE_DELAY,
             flight: None,
+            dragging: false,
+            pending_rotation: Vec2::ZERO,
             angular_velocity: Vec2::ZERO,
         }
     }
@@ -122,17 +131,18 @@ impl OrbitInteraction {
     }
 
     pub(crate) fn start_flyby(&mut self, camera: &mut OrbitCamera) {
+        self.clear_drag_motion();
         *camera = OrbitCamera {
             distance: FLYBY_START_DISTANCE,
             auto_rotate: camera.auto_rotate,
             ..default()
         };
         self.flight = Some(CameraFlight::Flyby { elapsed: 0.0 });
-        self.angular_velocity = Vec2::ZERO;
     }
 
-    pub(crate) fn stop_flight(&mut self) {
+    pub(crate) fn stop_motion(&mut self) {
         self.flight = None;
+        self.clear_drag_motion();
     }
 
     fn advance_flight(&mut self, camera: &mut OrbitCamera, now: Duration, seconds: f32) -> bool {
@@ -169,23 +179,73 @@ impl OrbitInteraction {
             }
             None => return false,
         }
-        self.stop_flight();
+        self.flight = None;
         true
+    }
+
+    fn clear_drag_motion(&mut self) {
+        self.pending_rotation = Vec2::ZERO;
+        self.angular_velocity = Vec2::ZERO;
+    }
+
+    fn move_target(&mut self, camera: &OrbitCamera, mut delta: Vec2) -> Vec2 {
+        let pitch = camera.pitch + self.pending_rotation.y;
+        delta.y = delta.y.clamp(-MAX_PITCH - pitch, MAX_PITCH - pitch);
+        self.pending_rotation += delta;
+        delta
+    }
+
+    fn follow_target(&mut self, camera: &mut OrbitCamera, mut remaining: Vec2) {
+        if remaining.abs().max_element() < ANGLE_EPSILON {
+            remaining = Vec2::ZERO;
+        }
+        camera.rotate(self.pending_rotation - remaining);
+        self.pending_rotation = remaining;
+    }
+
+    fn drag_by(&mut self, camera: &OrbitCamera, pixels: Vec2) {
+        self.flight = None;
+        let delta = self.move_target(camera, pixels * DRAG_RADIANS_PER_PIXEL);
+        self.angular_velocity = delta / DRAG_SAMPLE_SECONDS;
+    }
+
+    fn follow_drag(&mut self, camera: &mut OrbitCamera, moved: bool, seconds: f32) {
+        if !moved {
+            // A deliberate hold before release settles the view without a stale flick.
+            self.angular_velocity *= (-HELD_VELOCITY_DAMPING * seconds).exp();
+        }
+        if self.pending_rotation != Vec2::ZERO {
+            let remaining = self.pending_rotation * (-DRAG_FOLLOW_RATE * seconds).exp();
+            self.follow_target(camera, remaining);
+        }
     }
 
     fn coast(&mut self, camera: &mut OrbitCamera, seconds: f32) -> bool {
         if self.angular_velocity.length_squared() <= COAST_STOP_SPEED * COAST_STOP_SPEED {
             self.angular_velocity = Vec2::ZERO;
+        }
+        if self.angular_velocity == Vec2::ZERO && self.pending_rotation == Vec2::ZERO {
             return false;
         }
 
-        // Integrate the exponentially decaying speed over this frame.
-        let speed_loss = -(-COAST_DAMPING * seconds).exp_m1();
-        camera.rotate(self.angular_velocity * (speed_loss / COAST_DAMPING));
-        self.angular_velocity *= 1.0 - speed_loss;
-        if camera.pitch.abs() >= MAX_PITCH {
-            self.angular_velocity.y = 0.0;
+        let follow = -(-DRAG_FOLLOW_RATE * seconds).exp_m1();
+        let mut remaining = self.pending_rotation * (1.0 - follow);
+        if seconds > 0.0 && self.angular_velocity != Vec2::ZERO {
+            let speed_loss = -(-COAST_DAMPING * seconds).exp_m1();
+            let coast_time = speed_loss / COAST_DAMPING;
+            let requested = self.angular_velocity * coast_time;
+            let delta = self.move_target(camera, requested);
+            // Integrate the camera following a moving, exponentially slowing target.
+            // This fraction of the new displacement is still pending at frame end.
+            let lag_fraction =
+                (follow - speed_loss) / ((DRAG_FOLLOW_RATE - COAST_DAMPING) * coast_time);
+            remaining += delta * lag_fraction;
+            self.angular_velocity *= 1.0 - speed_loss;
+            if delta.y != requested.y {
+                self.angular_velocity.y = 0.0;
+            }
         }
+        self.follow_target(camera, remaining);
         self.idle_seconds = 0.0;
         true
     }
@@ -265,47 +325,54 @@ pub fn orbit_controller(
     mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
     real_time: Res<Time<Real>>,
-    mut motion: MessageReader<MouseMotion>,
+    mut events: MessageReader<WindowEvent>,
     mut wheel: MessageReader<MouseWheel>,
 ) {
     let left_pressed = mouse.pressed(MouseButton::Left);
-    let mut active_interaction = ui_activity.0 || left_pressed;
     let seconds = time.delta_secs();
 
-    if left_pressed && !wants.0 {
-        if mouse.just_pressed(MouseButton::Left) {
-            interaction.angular_velocity = Vec2::ZERO;
+    // Cursor deltas are logical pixels on both native and web. Read button edges
+    // in order so a final move and release in the same frame still count as a flick.
+    let mut moved = false;
+    for event in events.read() {
+        match event {
+            WindowEvent::MouseButtonInput(button) if button.button == MouseButton::Left => {
+                interaction.dragging = button.state.is_pressed() && !wants.0;
+                if button.state.is_pressed() {
+                    interaction.clear_drag_motion();
+                    moved = false;
+                }
+            }
+            WindowEvent::CursorMoved(cursor) if interaction.dragging && !wants.0 => {
+                if let Some(delta) = cursor.delta
+                    && delta != Vec2::ZERO
+                {
+                    interaction.drag_by(&camera, delta);
+                    moved = true;
+                }
+            }
+            WindowEvent::WindowFocused(focus) if !focus.focused => {
+                interaction.dragging = false;
+                interaction.clear_drag_motion();
+                moved = false;
+            }
+            _ => {}
         }
-        let start_pitch = camera.pitch;
-        let mut yaw_delta = 0.0;
-        for ev in motion.read() {
-            interaction.stop_flight();
-            // Orbit opposite the pointer so the foreground follows the drag.
-            let delta = Vec2::new(-ev.delta.x, ev.delta.y) * DRAG_RADIANS_PER_PIXEL;
-            camera.rotate(delta);
-            yaw_delta += delta.x;
-        }
-        if seconds > 0.0 {
-            // Sample the applied rotation. Holding still lets the estimate decay.
-            let delta = Vec2::new(yaw_delta, camera.pitch - start_pitch);
-            let velocity = (delta / seconds).clamp_length_max(MAX_DRAG_SPEED);
-            let weight = -(-DRAG_VELOCITY_RESPONSE * seconds).exp_m1();
-            interaction.angular_velocity = interaction.angular_velocity.lerp(velocity, weight);
-        }
-    } else {
-        // Discard hover and UI motion before the next scene drag.
-        motion.clear();
-        if active_interaction {
-            interaction.angular_velocity = Vec2::ZERO;
-        }
+    }
+    let mut active_interaction =
+        ui_activity.0 || left_pressed || mouse.just_pressed(MouseButton::Left) || moved;
+    if moved || (left_pressed && interaction.dragging && !wants.0) {
+        interaction.follow_drag(&mut camera, moved, seconds);
+    } else if active_interaction {
+        interaction.clear_drag_motion();
     }
     for ev in wheel.read() {
         active_interaction = true;
-        interaction.angular_velocity = Vec2::ZERO;
+        interaction.clear_drag_motion();
         if wants.0 {
             continue;
         }
-        interaction.stop_flight();
+        interaction.flight = None;
         // Trackpads/Magic Mouse deliver PIXEL deltas (tens of px per event);
         // wheel mice deliver LINE deltas (±1 per notch). Normalize pixels to
         // notch-equivalents — treating raw pixels as lines made a single
@@ -324,7 +391,7 @@ pub fn orbit_controller(
     }
     if active_interaction {
         if matches!(interaction.flight, Some(CameraFlight::Opening { .. })) {
-            interaction.stop_flight();
+            interaction.flight = None;
         }
         interaction.idle_seconds = 0.0;
         return;
@@ -346,7 +413,8 @@ pub fn orbit_controller(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    use bevy::input::mouse::MouseScrollUnit;
+    use bevy::input::{ButtonState, mouse::MouseButtonInput};
+    use bevy::window::CursorMoved;
 
     fn wheel_world(distance: f32) -> World {
         let mut world = World::new();
@@ -360,7 +428,7 @@ mod tests {
         world.insert_resource(ButtonInput::<MouseButton>::default());
         world.insert_resource(Time::<()>::default());
         world.insert_resource(Time::<Real>::default());
-        world.init_resource::<Messages<MouseMotion>>();
+        world.init_resource::<Messages<WindowEvent>>();
         world.init_resource::<Messages<MouseWheel>>();
         let mut schedule = Schedule::new(Update);
         schedule.add_systems(orbit_controller);
@@ -391,18 +459,41 @@ mod tests {
         world.resource_mut::<ButtonInput<MouseButton>>().clear();
     }
 
+    fn left_button(world: &mut World, state: ButtonState) {
+        let button = MouseButton::Left;
+        let mut mouse = world.resource_mut::<ButtonInput<MouseButton>>();
+        match state {
+            ButtonState::Pressed => mouse.press(button),
+            ButtonState::Released => mouse.release(button),
+        }
+        world.write_message(WindowEvent::MouseButtonInput(MouseButtonInput {
+            button,
+            state,
+            window: Entity::PLACEHOLDER,
+        }));
+    }
+
+    fn move_cursor(world: &mut World, delta: Vec2) {
+        world.write_message(WindowEvent::CursorMoved(CursorMoved {
+            window: Entity::PLACEHOLDER,
+            position: delta,
+            delta: Some(delta),
+        }));
+    }
+
     fn drag(world: &mut World, delta: Vec2, seconds: f32) {
-        world
-            .resource_mut::<ButtonInput<MouseButton>>()
-            .press(MouseButton::Left);
-        world.write_message(MouseMotion { delta });
+        if !world
+            .resource::<ButtonInput<MouseButton>>()
+            .pressed(MouseButton::Left)
+        {
+            left_button(world, ButtonState::Pressed);
+        }
+        move_cursor(world, delta);
         advance(world, seconds);
     }
 
     fn release_drag(world: &mut World) {
-        world
-            .resource_mut::<ButtonInput<MouseButton>>()
-            .release(MouseButton::Left);
+        left_button(world, ButtonState::Released);
     }
 
     #[test]
@@ -577,21 +668,32 @@ mod tests {
     #[test]
     fn drag_coasts_then_waits_before_resuming_auto_orbit() {
         let mut world = wheel_world(30.0);
-        drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
+        drag(&mut world, Vec2::new(6.0, 3.0), 1.0 / 60.0);
         release_drag(&mut world);
         let released = *world.resource::<OrbitCamera>();
+        let speed = world.resource::<OrbitInteraction>().angular_velocity;
 
-        advance(&mut world, 0.1);
+        advance(&mut world, std::f32::consts::LN_2 / 4.0);
         let first = *world.resource::<OrbitCamera>();
+        let half_speed = world.resource::<OrbitInteraction>().angular_velocity;
+        assert!((half_speed - speed * 0.5).length() < 1e-5);
         assert!(first.yaw < released.yaw);
         assert!(first.pitch > released.pitch);
 
-        advance(&mut world, 0.1);
+        advance(&mut world, 0.2);
         let second = *world.resource::<OrbitCamera>();
-        assert!(second.yaw < first.yaw);
-        assert!(first.yaw - second.yaw < released.yaw - first.yaw);
+        advance(&mut world, 0.2);
+        let third = *world.resource::<OrbitCamera>();
+        assert!(third.yaw < second.yaw && second.yaw < first.yaw);
+        assert!(second.yaw - third.yaw < first.yaw - second.yaw);
 
-        advance(&mut world, 0.8);
+        for _ in 0..180 {
+            advance(&mut world, 1.0 / 60.0);
+            let orbit = world.resource::<OrbitInteraction>();
+            if orbit.angular_velocity == Vec2::ZERO && orbit.pending_rotation == Vec2::ZERO {
+                break;
+            }
+        }
         let stopped = *world.resource::<OrbitCamera>();
         advance(&mut world, 1.4);
         assert!(*world.resource::<OrbitCamera>() == stopped);
@@ -601,16 +703,86 @@ mod tests {
     }
 
     #[test]
-    fn holding_the_mouse_still_before_release_stops_the_coast() {
+    fn held_drag_follows_the_target_then_releases_without_a_stale_flick() {
         let mut world = wheel_world(30.0);
-        drag(&mut world, Vec2::new(30.0, 15.0), 1.0 / 60.0);
-        let stopped = *world.resource::<OrbitCamera>();
+        let pitch = world.resource::<OrbitCamera>().pitch;
+        drag(&mut world, Vec2::splat(20.0), 1.0 / 60.0);
+        let target = Vec2::new(-0.110, pitch + 0.090);
+        let angles = |world: &World| {
+            let camera = world.resource::<OrbitCamera>();
+            Vec2::new(camera.yaw, camera.pitch)
+        };
+        let gap = target - angles(&world);
+        assert!(gap.x < 0.0 && gap.x > -0.110 && gap.y > 0.0 && gap.y < 0.090);
+        advance(&mut world, 0.1);
+        assert!((target - angles(&world) - gap * (-1.2_f32).exp()).length() < 1e-5);
 
-        advance(&mut world, 0.3);
+        advance(&mut world, 1.0);
+        assert!((angles(&world) - target).length() < 1e-5);
+        let stopped = *world.resource::<OrbitCamera>();
         release_drag(&mut world);
         advance(&mut world, 0.1);
 
         assert!(*world.resource::<OrbitCamera>() == stopped);
+    }
+
+    #[test]
+    fn quick_reversal_coasts_with_the_last_move_before_release() {
+        let mut world = wheel_world(30.0);
+        move_cursor(&mut world, Vec2::splat(100.0));
+        left_button(&mut world, ButtonState::Pressed);
+        move_cursor(&mut world, Vec2::new(4.0, 2.0));
+        move_cursor(&mut world, Vec2::new(-4.0, -2.0));
+        release_drag(&mut world);
+        move_cursor(&mut world, Vec2::splat(100.0));
+        advance(&mut world, 0.02);
+        let speed = world.resource::<OrbitInteraction>().angular_velocity;
+        assert!((speed - Vec2::new(1.375, -0.5625)).length() < 1e-5);
+        let released = *world.resource::<OrbitCamera>();
+        assert_eq!(released.yaw, OrbitCamera::default().yaw);
+        assert_eq!(released.pitch, OrbitCamera::default().pitch);
+        advance(&mut world, 0.05);
+        let coasting = *world.resource::<OrbitCamera>();
+        assert!(coasting.yaw > released.yaw && coasting.pitch < released.pitch);
+
+        left_button(&mut world, ButtonState::Pressed);
+        advance(&mut world, 0.1);
+        assert!(*world.resource::<OrbitCamera>() == coasting);
+    }
+
+    #[test]
+    fn a_drag_started_on_a_panel_does_not_rotate_the_scene() {
+        let mut world = wheel_world(30.0);
+        let start = *world.resource::<OrbitCamera>();
+        world.resource_mut::<WantsPointer>().0 = true;
+        drag(&mut world, Vec2::splat(20.0), 0.02);
+        world.resource_mut::<WantsPointer>().0 = false;
+        drag(&mut world, Vec2::splat(20.0), 0.02);
+        release_drag(&mut world);
+        advance(&mut world, 0.2);
+        assert!(*world.resource::<OrbitCamera>() == start);
+    }
+
+    #[test]
+    fn damping_crosses_the_yaw_seam_and_settles_at_the_pitch_limit() {
+        let mut world = wheel_world(30.0);
+        let mut camera = world.resource_mut::<OrbitCamera>();
+        camera.yaw = -PI + 0.02;
+        camera.pitch = MAX_PITCH - 0.02;
+        camera.auto_rotate = false;
+        drag(&mut world, Vec2::splat(12.0), 0.02);
+        release_drag(&mut world);
+        for _ in 0..180 {
+            let before = *world.resource::<OrbitCamera>();
+            advance(&mut world, 1.0 / 60.0);
+            let after = world.resource::<OrbitCamera>();
+            let yaw_step = (after.yaw - before.yaw + PI).rem_euclid(TAU) - PI;
+            assert!((-0.06..=0.0).contains(&yaw_step));
+            assert!((before.pitch..=MAX_PITCH).contains(&after.pitch));
+        }
+        let camera = world.resource::<OrbitCamera>();
+        assert!(camera.yaw > 0.0);
+        assert!((camera.pitch - MAX_PITCH).abs() < ANGLE_EPSILON);
     }
 
     #[test]
