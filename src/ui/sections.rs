@@ -6,7 +6,8 @@ use bevy_egui::egui::{self, Align, Layout, RichText, TextStyle, Ui};
 
 use crate::camera::{OrbitCamera, OrbitInteraction};
 use crate::params::{
-    AaQuality, BlackHoleParams, BloomQuality, DiskColorMode, DiskQuality, MAX_DISK_CLUMPS,
+    AaQuality, BlackHoleParams, BloomQuality, DiskColorMode, DiskQuality, KerrGeometry,
+    MAX_DISK_CLUMPS,
 };
 use crate::ui::style::{ACCENT, BORDER, MUTED_TEXT, SURFACE, TEXT};
 
@@ -171,17 +172,15 @@ pub fn section_camera(ui: &mut Ui, cam: &mut OrbitCamera, orbit: &mut OrbitInter
     }
 }
 
-pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams) {
+pub fn section_scene(ui: &mut Ui, params: &mut BlackHoleParams, geometry: KerrGeometry) {
     heading(ui, "Black hole");
     slider(ui, "Spin (χ)", &mut params.spin, 0.0..=1.0, 2, "", false);
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("ISCO").small().color(MUTED_TEXT))
             .on_hover_text("Inner edge of the accretion disk");
-        ui.label(RichText::new(format!("{:.3}", crate::physics::kerr_isco(params.spin))).small());
+        ui.label(RichText::new(format!("{:.3}", geometry.isco)).small());
         ui.label(RichText::new("Horizon r+").small().color(MUTED_TEXT));
-        ui.label(
-            RichText::new(format!("{:.3}", crate::physics::kerr_horizon(params.spin))).small(),
-        );
+        ui.label(RichText::new(format!("{:.3}", geometry.horizon)).small());
     });
     ui.separator();
     heading(ui, "Accretion disk");
@@ -311,7 +310,7 @@ pub fn section_render(ui: &mut Ui, params: &mut BlackHoleParams) {
     }
 }
 
-pub fn section_effects(ui: &mut Ui, params: &mut BlackHoleParams) {
+pub fn section_effects(ui: &mut Ui, params: &mut BlackHoleParams, spin: f32) {
     egui::CollapsingHeader::new("Accretion flow").show(ui, |ui| {
         section_turbulence(ui, params);
     });
@@ -331,7 +330,7 @@ pub fn section_effects(ui: &mut Ui, params: &mut BlackHoleParams) {
         });
     });
     ui.separator();
-    egui::CollapsingHeader::new("Jets").show(ui, |ui| section_jets(ui, params));
+    egui::CollapsingHeader::new("Jets").show(ui, |ui| section_jets(ui, params, spin));
     ui.separator();
     egui::CollapsingHeader::new("Planets").show(ui, |ui| section_planets(ui, params));
     ui.separator();
@@ -471,9 +470,9 @@ fn section_turbulence(ui: &mut Ui, params: &mut BlackHoleParams) {
     );
 }
 
-fn section_jets(ui: &mut Ui, params: &mut BlackHoleParams) {
+fn section_jets(ui: &mut Ui, params: &mut BlackHoleParams, spin: f32) {
     switch(ui, "Enable jets", &mut params.jets_enabled);
-    let jets_renderable = params.spin >= 0.05;
+    let jets_renderable = spin >= 0.05;
     if params.jets_enabled && !jets_renderable {
         ui.label(
             RichText::new("Jets require spin χ ≥ 0.05.")

@@ -1,4 +1,4 @@
-use crate::params::MAX_DISK_CLUMPS;
+use crate::params::{KerrGeometry, MAX_DISK_CLUMPS, advance_spin};
 use crate::state::{AppState, LoadingProgress, ShaderAssets};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{CameraUpdateSystems, RenderTarget};
@@ -121,6 +121,7 @@ impl Plugin for BlackHolePlugin {
             .init_resource::<crate::camera::UiPointerActivity>()
             .init_resource::<crate::camera::WantsPointer>()
             .init_resource::<crate::params::BlackHoleParams>()
+            .init_resource::<KerrGeometry>()
             .init_resource::<crate::scene::planets::PlanetSystemDirty>()
             .add_plugins(Material2dPlugin::<BlackHoleMaterial>::default())
             .add_plugins(Material2dPlugin::<crate::render::material::CompositeMaterial>::default())
@@ -148,9 +149,13 @@ impl Plugin for BlackHolePlugin {
             .add_systems(Update, crate::scene::planets::spawn_planet_system)
             .add_systems(
                 Update,
-                crate::scene::planets::orbit_system.before(crate::scene::planets::upload_planets),
+                (
+                    advance_spin,
+                    crate::scene::planets::orbit_system,
+                    crate::scene::planets::upload_planets,
+                )
+                    .chain(),
             )
-            .add_systems(Update, crate::scene::planets::upload_planets)
             .add_systems(
                 PostUpdate,
                 (rebuild_bloom, resize_offscreen, mirror_params)
@@ -714,6 +719,7 @@ fn mirror_params(
     camera: Res<crate::camera::OrbitCamera>,
     framing: Res<crate::camera::SceneFraming>,
     params: Res<crate::params::BlackHoleParams>,
+    geometry: Res<KerrGeometry>,
     time: Res<Time>,
     mut disk_time: Local<f64>,
     window: Query<&Window>,
@@ -745,7 +751,7 @@ fn mirror_params(
         u.time = time.elapsed_secs();
         u.rs = params.rs;
         // disk_inner is spin-derived (Kerr ISCO); the params.disk_inner field is ignored.
-        u.disk_inner = crate::physics::kerr_isco(params.spin);
+        u.disk_inner = geometry.isco;
         u.disk_outer = params.disk_outer;
         u.disk_tilt = params.disk_tilt;
         u.disk_brightness = params.disk_brightness;
@@ -757,7 +763,7 @@ fn mirror_params(
         u.grid_enabled = params.grid_enabled as u32;
         u.planet_count = params.planet_count;
         u.steps = params.steps;
-        u.spin = params.spin;
+        u.spin = geometry.spin;
         u.star_aa = params.star_aa as u32;
         u.bloom_threshold = params.bloom_threshold;
         u.bloom_strength = params.bloom_strength;
@@ -805,6 +811,62 @@ mod tests {
             .get(handle)
             .unwrap()
             .size()
+    }
+
+    #[test]
+    fn spin_transition_keeps_the_rendered_geometry_in_sync_after_edits_and_reset() {
+        for fps in [30, 120] {
+            let mut clock = Time::<Real>::default();
+            clock.advance_by(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
+            let mut app = App::new();
+            app.insert_resource(clock)
+                .init_resource::<Time>()
+                .insert_resource(BlackHoleParams {
+                    spin: 0.2,
+                    ..Default::default()
+                })
+                .init_resource::<KerrGeometry>()
+                .init_resource::<crate::camera::OrbitCamera>()
+                .init_resource::<crate::camera::SceneFraming>()
+                .init_resource::<Assets<BlackHoleMaterial>>()
+                .init_resource::<Assets<BrightPassMaterial>>()
+                .init_resource::<Assets<CompositeMaterial>>()
+                .add_systems(Update, advance_spin)
+                .add_systems(PostUpdate, mirror_params);
+            let world = app.world_mut();
+            world.spawn(Window::default());
+            let material = world
+                .resource_mut::<Assets<BlackHoleMaterial>>()
+                .add(BlackHoleMaterial::default());
+            assert_eq!(world.resource::<KerrGeometry>().spin, 0.2);
+            world.resource_mut::<BlackHoleParams>().spin = 1.0;
+            for _ in 0..fps * 6 / 5 {
+                app.update();
+            }
+
+            // After 1.2 seconds, exp(-3) of the initial gap should remain at either FPS.
+            let world = app.world_mut();
+            let spin = world.resource::<KerrGeometry>().spin;
+            assert!((spin - (1.0 - 0.8 * (-3.0_f32).exp())).abs() < 1e-5);
+            assert_eq!(world.resource::<BlackHoleParams>().spin, 1.0);
+            let materials = world.resource::<Assets<BlackHoleMaterial>>();
+            let uniforms = &materials.get(&material).unwrap().uniforms;
+            assert_eq!(uniforms.spin, spin);
+            assert_eq!(uniforms.disk_inner, crate::physics::kerr_isco(spin));
+            assert_eq!(
+                world.resource::<KerrGeometry>().horizon,
+                crate::physics::kerr_horizon(spin)
+            );
+
+            *world.resource_mut::<BlackHoleParams>() = BlackHoleParams::default();
+            app.update();
+            let reversing = app.world().resource::<KerrGeometry>().spin;
+            assert!((reversing - spin * (-2.5 / fps as f32).exp()).abs() < 1e-5);
+            for _ in 0..fps * 5 {
+                app.update();
+            }
+            assert_eq!(app.world().resource::<KerrGeometry>().spin, 0.0);
+        }
     }
 
     #[test]

@@ -2,6 +2,46 @@ use bevy::prelude::*;
 
 pub(crate) const MAX_DISK_CLUMPS: usize = 6;
 
+/// Dimensionless spin and the corresponding ISCO and horizon radii (in Rs) for this frame.
+#[derive(Resource, Clone, Copy)]
+pub struct KerrGeometry {
+    pub spin: f32,
+    pub isco: f32,
+    pub horizon: f32,
+}
+
+impl KerrGeometry {
+    pub(crate) fn from_spin(spin: f32) -> Self {
+        Self {
+            spin,
+            isco: crate::physics::kerr_isco(spin),
+            horizon: crate::physics::kerr_horizon(spin),
+        }
+    }
+}
+
+impl FromWorld for KerrGeometry {
+    fn from_world(world: &mut World) -> Self {
+        Self::from_spin(world.resource::<BlackHoleParams>().spin)
+    }
+}
+
+pub(crate) fn advance_spin(
+    time: Res<Time<Real>>,
+    params: Res<BlackHoleParams>,
+    mut geometry: ResMut<KerrGeometry>,
+) {
+    let target = params.spin;
+    if geometry.spin == target {
+        return;
+    }
+    // Event Horizon uses a 0.4 s time constant and caps a stalled frame at 100 ms.
+    let weight = -(-2.5 * time.delta_secs().min(0.1)).exp_m1();
+    let next = geometry.spin + (target - geometry.spin) * weight;
+    let settled = (target - next).abs() < 1e-5 * (1.0 + target.abs());
+    *geometry = KerrGeometry::from_spin(if settled { target } else { next });
+}
+
 /// Bloom pyramid depth (number of bloom textures).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BloomQuality {
@@ -88,7 +128,6 @@ impl AaQuality {
 /// All tunable black-hole parameters. Edited by the egui panel (Task 17),
 /// mirrored into BlackHoleUniforms each frame (Task 7).
 #[derive(Resource, Clone)]
-#[allow(dead_code)] // spin is reserved for Phase 2 (Kerr); render_scale now wired in Phase 2
 pub struct BlackHoleParams {
     // Physics (natural units, Rs = 1)
     pub rs: f32,
@@ -110,7 +149,7 @@ pub struct BlackHoleParams {
     pub skybox_intensity: f32,
     // Planets (count matches the storage buffer; Task 14)
     pub planet_count: u32,
-    // Kerr (Phase 2; unused in Phase 1)
+    /// Target dimensionless Kerr spin χ. The scene follows it through `KerrGeometry`.
     pub spin: f32,
     // Quality (Phase 3: cinematic rendering)
     pub star_aa: bool,

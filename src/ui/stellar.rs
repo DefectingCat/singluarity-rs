@@ -210,6 +210,7 @@ impl StellarLab {
         ctx: &egui::Context,
         camera: &OrbitCamera,
         params: &BlackHoleParams,
+        isco: f32,
         framing: &mut SceneFraming,
     ) -> [egui::Rect; 3] {
         let layout = LabLayout::new(ctx);
@@ -348,7 +349,7 @@ impl StellarLab {
                     region,
                     center,
                     camera,
-                    fit_radius(params, experiment),
+                    fit_radius(params.rs, isco, experiment),
                 );
             }
             frame_scene(canvas, center, self.distance_scale)
@@ -388,8 +389,8 @@ impl StellarLab {
     }
 }
 
-fn fit_radius(params: &BlackHoleParams, experiment: &Experiment) -> f32 {
-    let inner_disk = (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0);
+fn fit_radius(rs: f32, isco: f32, experiment: &Experiment) -> f32 {
+    let inner_disk = (isco + 1.5).max(4.0);
     // Frame the inner disk and the local encounter. Distant custom passes
     // remain available in the orbit map without making the black hole tiny.
     let encounter = experiment
@@ -400,7 +401,7 @@ fn fit_radius(params: &BlackHoleParams, experiment: &Experiment) -> f32 {
         .map(|sample| sample.radius as f32)
         .fold(inner_disk, f32::max)
         .min(12.0);
-    encounter * params.rs
+    encounter * rs
 }
 
 fn inspector(
@@ -810,6 +811,7 @@ mod tests {
                                     &context,
                                     &OrbitCamera::default(),
                                     &BlackHoleParams::default(),
+                                    crate::physics::kerr_isco(0.0),
                                     &mut framing,
                                 );
                             },

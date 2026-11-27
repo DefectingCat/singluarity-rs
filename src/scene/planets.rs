@@ -78,6 +78,7 @@ pub fn orbit_position(orbit: &OrbitParams, t: f32, chi: f32, disk_outer: f32) ->
 pub fn orbit_system(
     time: Res<Time>,
     params: Res<crate::params::BlackHoleParams>,
+    geometry: Res<crate::params::KerrGeometry>,
     mut query: Query<(&OrbitParams, &mut Planet)>,
 ) {
     if !params.planets_enabled {
@@ -86,7 +87,7 @@ pub fn orbit_system(
     // time_scale 放大模拟时间, 让慢进动在合理时间内可见 (Ω_LT 在 r=8 转一圈 ~25 min)
     let t = time.elapsed_secs() * params.planet_time_scale;
     for (orbit, mut planet) in &mut query {
-        planet.center = orbit_position(orbit, t, params.spin, params.disk_outer);
+        planet.center = orbit_position(orbit, t, geometry.spin, params.disk_outer);
     }
 }
 

@@ -236,6 +236,7 @@ impl ProbeLab {
         ctx: &egui::Context,
         camera: &OrbitCamera,
         params: &BlackHoleParams,
+        isco: f32,
         framing: &mut SceneFraming,
     ) -> [egui::Rect; 3] {
         let layout = LabLayout::new(ctx);
@@ -349,7 +350,7 @@ impl ProbeLab {
             };
             if self.fit_pending && (!panel_open || settled_panel.is_some()) {
                 self.fit_pending = false;
-                let inner_disk = (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0);
+                let inner_disk = (isco + 1.5).max(4.0);
                 let radius = self
                     .runs
                     .iter()
@@ -813,6 +814,7 @@ mod tests {
         lab.load(Experiment::Capture);
         let camera = OrbitCamera::default();
         let params = BlackHoleParams::default();
+        let isco = crate::physics::kerr_isco(params.spin);
         let mut framing = SceneFraming::default();
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 560.0));
         let mut time = 0.0;
@@ -826,7 +828,7 @@ mod tests {
                         screen_rect: Some(viewport),
                         ..Default::default()
                     },
-                    |_| bounds = lab.show(&ctx, &camera, &params, &mut framing),
+                    |_| bounds = lab.show(&ctx, &camera, &params, isco, &mut framing),
                 );
                 output.textures_delta.clear();
             }

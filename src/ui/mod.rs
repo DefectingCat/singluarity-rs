@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy_egui::egui::{self, Align, Button, Layout, RichText, Ui};
 
 use crate::camera::{OrbitCamera, OrbitInteraction, SceneFraming, UiPointerActivity, WantsPointer};
-use crate::params::BlackHoleParams;
+use crate::params::{BlackHoleParams, KerrGeometry};
 use crate::scene::planets::PlanetSystemDirty;
 use crate::ui::preset::{Preset, apply, canonical_hash, params_hash};
 use crate::ui::style::{ACCENT, MUTED_TEXT, TEXT};
@@ -81,6 +81,7 @@ const PRESETS: [(Preset, &str); 4] = [
 pub fn ui_system(
     mut contexts: bevy_egui::EguiContexts,
     mut params: ResMut<BlackHoleParams>,
+    geometry: Res<KerrGeometry>,
     mut camera: ResMut<OrbitCamera>,
     mut orbit: ResMut<OrbitInteraction>,
     mut framing: ResMut<SceneFraming>,
@@ -102,15 +103,19 @@ pub fn ui_system(
     let main = controls.show(
         ctx,
         &mut params,
+        *geometry,
         &mut camera,
         &mut orbit,
         &mut framing,
-        !probe_active && !stellar_active,
     );
     let regions = if probe_active {
-        controls.probe.show(ctx, &camera, &params, &mut framing)
+        controls
+            .probe
+            .show(ctx, &camera, &params, geometry.isco, &mut framing)
     } else if stellar_active {
-        controls.stellar.show(ctx, &camera, &params, &mut framing)
+        controls
+            .stellar
+            .show(ctx, &camera, &params, geometry.isco, &mut framing)
     } else {
         main
     };
@@ -147,11 +152,12 @@ impl Controls {
         &mut self,
         ctx: &egui::Context,
         params: &mut BlackHoleParams,
+        geometry: KerrGeometry,
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
         framing: &mut SceneFraming,
-        visible: bool,
     ) -> [egui::Rect; 3] {
+        let visible = !self.probe.is_active() && !self.stellar.is_active();
         if visible && !ctx.text_edit_focused() && !ctx.any_popup_open() {
             let tab_available = !ctx.egui_wants_keyboard_input();
             ctx.input_mut(|input| {
@@ -203,15 +209,14 @@ impl Controls {
                 panel_progress,
                 toolbar_reveal,
                 open,
-                |ui, _| self.inspector(ui, params, camera, orbit),
+                |ui, _| self.inspector(ui, params, geometry, camera, orbit),
             );
             if open {
                 panel = surface.rect;
                 let canvas = ctx.viewport_rect();
                 let region = layout.scene_region(&toolbar, None, Some(surface.settled));
                 if std::mem::take(&mut self.fit_pending) {
-                    let radius =
-                        (crate::physics::kerr_isco(params.spin) + 1.5).max(4.0) * params.rs;
+                    let radius = (geometry.isco + 1.5).max(4.0) * params.rs;
                     self.distance_scale =
                         fit_distance(canvas, region, region.center(), camera, radius);
                 }
@@ -233,6 +238,7 @@ impl Controls {
         &mut self,
         ui: &mut Ui,
         params: &mut BlackHoleParams,
+        geometry: KerrGeometry,
         camera: &mut OrbitCamera,
         orbit: &mut OrbitInteraction,
     ) {
@@ -259,9 +265,9 @@ impl Controls {
 
                         match tab {
                             ControlTab::Camera => section_camera(ui, camera, orbit),
-                            ControlTab::Scene => section_scene(ui, params),
+                            ControlTab::Scene => section_scene(ui, params, geometry),
                             ControlTab::Render => section_render(ui, params),
-                            ControlTab::Effects => section_effects(ui, params),
+                            ControlTab::Effects => section_effects(ui, params, geometry.spin),
                         }
                     });
             });
@@ -411,10 +417,10 @@ mod tests {
                 let rects = controls.show(
                     &ctx,
                     &mut params,
+                    KerrGeometry::from_spin(0.0),
                     &mut camera,
                     &mut orbit,
                     &mut framing,
-                    true,
                 );
                 result = Some((rects, pointer_over_controls(&ctx, &rects), framing.offset));
             });
